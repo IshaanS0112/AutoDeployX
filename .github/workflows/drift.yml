@@ -1,0 +1,185 @@
+name: Drift detection
+
+# Terraform state is a claim about what exists.
+
+on:
+  schedule:
+    # 06:00 UTC Monday. Weekly, not daily: this stack is destroyed between
+    # demos, and a daily job against a destroyed stack is a weekly habit of
+    # ignoring the notification.
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+  issues: write   # to open the drift report
+
+env:
+  AWS_REGION: ap-south-1
+  TF_VERSION: "1.9.8"
+
+concurrency:
+  group: drift
+  cancel-in-progress: true
+
+jobs:
+  detect:
+    name: terraform plan -detailed-exitcode
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          # The read-only plan role. This job runs unattended on a schedule
+          # and only ever plans; it has no business holding write permissions.
+          role-to-assume: ${{ vars.AWS_PLAN_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: gha-drift-${{ github.run_id }}
+
+      - id: stack
+        name: Is the stack even up?
+        run: |
+          set -euo pipefail
+          # This project's operating model is apply-for-a-demo-then-destroy. A
+          # destroyed stack is not drift, and reporting it as drift every week
+          # is how a useful alert becomes noise.
+          if aws ecs describe-clusters --clusters "${{ vars.ECS_CLUSTER }}" \
+               --query 'clusters[0].status' --output text 2>/dev/null | grep -q ACTIVE; then
+            echo "up=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "up=false" >> "$GITHUB_OUTPUT"
+            echo "::notice title=Stack is down::No active ECS cluster — nothing to compare. This is the expected state between demos."
+          fi
+
+      - name: terraform init
+        if: steps.stack.outputs.up == 'true'
+        working-directory: terraform
+        run: |
+          terraform init -input=false \
+            -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" \
+            -backend-config="region=${{ env.AWS_REGION }}" \
+            -backend-config="use_lockfile=true"
+
+      - id: plan
+        name: terraform plan -detailed-exitcode
+        if: steps.stack.outputs.up == 'true'
+        working-directory: terraform
+        continue-on-error: true
+        env:
+          TF_VAR_operator_cidr: ${{ vars.OPERATOR_CIDR }}
+          TF_VAR_budget_notification_email: ${{ vars.BUDGET_EMAIL }}
+        run: |
+          set +e
+          # -lock=false: this only reads. Taking a write lock on a scheduled
+          # job would block a human apply for no reason.
+          terraform plan -detailed-exitcode -no-color -input=false -lock=false 2>&1 | tee plan.txt
+          code=${PIPESTATUS[0]}
+          set -e
+          echo "exitcode=$code" >> "$GITHUB_OUTPUT"
+          case "$code" in
+            0) echo "::notice title=No drift::Reality matches state." ;;
+            2) echo "::warning title=Drift detected::Infrastructure has diverged from Terraform state." ;;
+            *) echo "::error title=Plan failed::This is not drift — the plan itself did not run." ;;
+          esac
+
+      - name: Open or update the drift issue
+        if: steps.stack.outputs.up == 'true' && steps.plan.outputs.exitcode == '2'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const plan = fs.readFileSync('terraform/plan.txt', 'utf8').slice(-50000);
+            const title = 'Infrastructure drift detected';
+            const body = [
+              'The scheduled drift check found differences between the Terraform',
+              'state and what actually exists in AWS.',
+              '',
+              `Run: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+              '',
+              '<details><summary>Plan output</summary>',
+              '',
+              '```terraform',
+              plan,
+              '```',
+              '',
+              '</details>',
+              '',
+              'Drift is usually one of three things:',
+              '',
+              '1. Someone changed something in the console. Move the change into',
+              '   Terraform, or revert it.',
+              '2. An AWS-side default changed. Usually the right fix is an',
+              '   `ignore_changes` with a comment saying why.',
+              '3. A resource was deleted outside Terraform. `terraform apply`',
+              '   will recreate it — check what else depended on it first.',
+              '',
+              '_Apply is deliberately a local, human-run step in this project._',
+              '_See docs/runbook.md._',
+            ].join('\n');
+
+            // One issue, reused. A new issue every Monday for the same
+            // unresolved drift is how a repo ends up with 40 identical issues
+            // and nobody reading any of them.
+            const existing = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: 'drift',
+            });
+
+            if (existing.data.length > 0) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: existing.data[0].number,
+                body: `Still drifting as of ${new Date().toISOString()}.\n\n${body}`,
+              });
+            } else {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title,
+                body,
+                labels: ['drift'],
+              });
+            }
+
+      - name: Close the drift issue when reality matches state again
+        if: steps.stack.outputs.up == 'true' && steps.plan.outputs.exitcode == '0'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const existing = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: 'drift',
+            });
+            for (const issue of existing.data) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                body: 'Resolved — `terraform plan` reports no changes.',
+              });
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                state: 'closed',
+                state_reason: 'completed',
+              });
+            }
+
+      - name: Fail the run when the plan itself broke
+        if: steps.stack.outputs.up == 'true' && steps.plan.outputs.exitcode == '1'
+        run: |
+          echo "terraform plan exited 1 — the plan could not run at all." >&2
+          echo "That is a broken configuration or broken credentials, not drift." >&2
+          exit 1

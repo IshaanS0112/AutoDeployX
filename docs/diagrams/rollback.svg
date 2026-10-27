@@ -1,0 +1,140 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 700" width="1100" height="700" font-family="ui-sans-serif, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
+  <title>What happens when a deploy is bad</title>
+  <desc>Timeline of the ECS deployment circuit breaker: a broken revision starts alongside the healthy one, fails three ALB health checks, is declared FAILED, and the previous task definition is restored. The public URL answers throughout.</desc>
+
+  <style>
+    /* Graphite — the house dark theme. One accent (#C6F432), used on roughly
+       5% of the surface: the title tick, the live path, the one box that
+       matters. Elevation by surface step and 1px borders, never shadows. */
+    :root{
+      --bg:#0A0B0D; --panel:#111317; --panel2:#171A1F;
+      --line:#23262D; --line-strong:#343842;
+      --text:#E8EAED; --muted:#9097A1; --subtle:#5F6670;
+      --accent:#C6F432; --accent-tint:rgba(198,244,50,0.12);
+      --info:#60A5FA; --success:#34D399; --warning:#FBBF24; --danger:#F87171;
+    }
+    .bg{fill:var(--bg)}
+    .panel{fill:var(--panel);stroke:var(--line);stroke-width:1;rx:10}
+    .panel2{fill:var(--panel2);stroke:var(--line);stroke-width:1;rx:8}
+    .t{fill:var(--text)}
+    .m{fill:var(--muted)}
+    .b{fill:var(--info)} .g{fill:var(--success)} .a{fill:var(--warning)}
+    .r{fill:var(--danger)} .v{fill:var(--accent)}
+    /* Signature: uppercase mono section labels, 11px, +0.08em tracking. */
+    .h{font-size:11px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;
+       font-family:ui-monospace,'Geist Mono','SF Mono',Menlo,monospace}
+    .n{font-size:14px;font-weight:600;letter-spacing:-0.01em}
+    .s{font-size:11.5px}
+    .xs{font-size:10.5px}
+    .mono{font-family:ui-monospace,'Geist Mono','SF Mono',Menlo,Consolas,monospace}
+    .ok{fill:rgba(52,211,153,0.10);stroke:var(--success);stroke-width:1.25;rx:8}
+    .bad{fill:rgba(248,113,113,0.10);stroke:var(--danger);stroke-width:1.25;rx:8}
+    .warn{fill:rgba(251,191,36,0.10);stroke:var(--warning);stroke-width:1.25;rx:8}
+    .edge{stroke:var(--line-strong);stroke-width:1.25;fill:none}
+    .lane{stroke:var(--line);stroke-width:1;stroke-dasharray:3 4}
+  </style>
+  <defs>
+    <marker id="ar2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="var(--line-strong)"/>
+    </marker>
+  </defs>
+
+  <rect class="bg" x="0" y="0" width="1100" height="700"/>
+
+  <rect x="40" y="24" width="2" height="10" fill="var(--accent)"/>
+  <text class="t" x="52" y="34" font-size="11" font-weight="500" letter-spacing="0.08em" font-family="ui-monospace, monospace">FAILURE PATH</text>
+  <text class="t" x="40" y="62" font-size="21" font-weight="600" letter-spacing="-0.02em">When a deploy is bad</text>
+
+  <!-- lane labels -->
+  <text class="m h" x="40" y="108">Pipeline</text>
+  <text class="m h" x="40" y="212">ECS</text>
+  <text class="m h" x="40" y="352">ALB health</text>
+  <text class="m h" x="40" y="492">Public URL</text>
+
+  <line class="lane" x1="150" y1="84" x2="1060" y2="84"/>
+  <line class="lane" x1="150" y1="188" x2="1060" y2="188"/>
+  <line class="lane" x1="150" y1="328" x2="1060" y2="328"/>
+  <line class="lane" x1="150" y1="468" x2="1060" y2="468"/>
+  <line class="lane" x1="150" y1="556" x2="1060" y2="556"/>
+
+  <!-- t0 -->
+  <text class="m xs mono" x="170" y="80">t+0s</text>
+  <rect class="panel" x="160" y="90" width="170" height="44"/>
+  <text class="t n" x="176" y="110">push a bad commit</text>
+  <text class="m xs mono" x="176" y="126">/health returns 503</text>
+
+  <rect class="ok" x="160" y="200" width="170" height="56"/>
+  <text class="g n" x="176" y="222">rev 41 · healthy</text>
+  <text class="m xs" x="176" y="238">serving all traffic</text>
+  <text class="m xs mono" x="176" y="251">runningCount 1/1</text>
+
+  <!-- t60 -->
+  <text class="m xs mono" x="370" y="80">t+60s</text>
+  <rect class="panel" x="360" y="90" width="180" height="44"/>
+  <text class="t n" x="376" y="110">update-service</text>
+  <text class="m xs mono" x="376" y="126">rolloutState IN_PROGRESS</text>
+
+  <rect class="ok" x="360" y="200" width="180" height="40"/>
+  <text class="g n" x="376" y="222">rev 41 still up</text>
+  <rect class="warn" x="360" y="248" width="180" height="48"/>
+  <text class="a n" x="376" y="270">rev 42 starting</text>
+  <text class="m xs mono" x="376" y="286">maximumPercent = 200</text>
+
+  <rect class="panel" x="360" y="344" width="180" height="56"/>
+  <text class="m xs" x="376" y="364">grace period, 90s</text>
+  <text class="m xs" x="376" y="380">ECS does not judge a</text>
+  <text class="m xs" x="376" y="393">task that is still booting</text>
+
+  <!-- t150 -->
+  <text class="m xs mono" x="580" y="80">t+150s</text>
+  <rect class="panel" x="570" y="90" width="180" height="44"/>
+  <text class="m xs" x="586" y="110">deploy.sh polls</text>
+  <text class="m xs mono" x="586" y="126">rolloutState, not `wait`</text>
+
+  <rect class="ok" x="570" y="200" width="180" height="40"/>
+  <text class="g n" x="586" y="222">rev 41 still serving</text>
+  <rect class="bad" x="570" y="248" width="180" height="48"/>
+  <text class="r n" x="586" y="270">rev 42 unhealthy</text>
+  <text class="m xs mono" x="586" y="286">never receives traffic</text>
+
+  <rect class="bad" x="570" y="344" width="180" height="70"/>
+  <text class="r n" x="586" y="366">3 × 15s failed</text>
+  <text class="m xs mono" x="586" y="383">503 from /health</text>
+  <text class="m xs" x="586" y="399">unhealthy_threshold = 3</text>
+
+  <!-- t210 -->
+  <text class="m xs mono" x="790" y="80">t+210s</text>
+  <rect class="bad" x="780" y="90" width="180" height="44"/>
+  <text class="r n" x="796" y="110">rolloutState FAILED</text>
+  <text class="m xs" x="796" y="126">job is going to exit 1</text>
+
+  <rect class="warn" x="780" y="200" width="180" height="56"/>
+  <text class="a n" x="796" y="222">circuit breaker trips</text>
+  <text class="m xs mono" x="796" y="238">ROLLBACK_IN_PROGRESS</text>
+  <text class="m xs" x="796" y="251">rev 42 stopped</text>
+
+  <!-- t270 -->
+  <text class="m xs mono" x="990" y="80">t+270s</text>
+  <rect class="bad" x="980" y="90" width="80" height="44"/>
+  <text class="r n" x="996" y="110">build</text>
+  <text class="r n" x="996" y="126">RED</text>
+
+  <rect class="ok" x="980" y="200" width="80" height="56"/>
+  <text class="g n" x="996" y="222">rev 41</text>
+  <text class="g n" x="996" y="238">restored</text>
+  <text class="m xs" x="996" y="251">1/1</text>
+
+  <!-- public URL lane -->
+  <rect class="ok" x="160" y="480" width="900" height="56"/>
+  <text class="g n" x="180" y="504">200 OK — the entire time</text>
+  <text class="m xs mono" x="180" y="522">while true; do curl -s -o /dev/null -w '%{http_code} ' $URL/api/health; sleep 1; done</text>
+
+  <text class="m xs" x="180" y="576">minimum_healthy_percent = 100 means the old task is never stopped before the new one is healthy. The new one never</text>
+  <text class="m xs" x="180" y="592">becomes healthy, so the old one is never stopped. That is the whole mechanism — no pipeline logic, no human.</text>
+
+  <!-- footer callout -->
+  <rect class="panel" x="160" y="612" width="900" height="66"/>
+  <text class="b n" x="180" y="634">Why not `aws ecs wait services-stable`</text>
+  <text class="m xs" x="180" y="653">A service the circuit breaker has just rolled back is perfectly stable, so that command returns SUCCESS for it — reporting</text>
+  <text class="m xs" x="180" y="669">this exact failure as a green build. scripts/deploy.sh polls rolloutState, which distinguishes COMPLETED from FAILED.</text>
+</svg>

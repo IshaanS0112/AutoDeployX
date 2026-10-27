@@ -1,0 +1,44 @@
+# Terraform
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+*.tfplan
+tfplan
+crash.log
+crash.*.log
+# Contains operator_cidr and the notification email. backend.hcl is generated
+# by scripts/bootstrap-state.sh and names your state bucket.
+*.tfvars
+*.tfvars.json
+# ...but the committed templates are the documentation for what a real one
+# needs, so they have to survive the rule above.
+!terraform/envs/*.tfvars.example
+backend.hcl
+backend.*.hcl
+.terraform.lock.hcl.bak
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# Never
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+credentials
+.aws/
+
+# Local
+plan.txt
+.DS_Store
+__pycache__/
+*.py[cod]
+node_modules/
+.idea/
+.vscode/
+*.swp
+
+# The .dockerignore that scripts copy into a service repo checkout
+/service/

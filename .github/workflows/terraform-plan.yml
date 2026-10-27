@@ -1,0 +1,141 @@
+name: Terraform
+
+# Infrastructure as REVIEWABLE code. A PR touching terraform/ gets a plan posted as
+# a comment, so the diff to production infrastructure is read before it is applied —
+# the same review gate.
+
+on:
+  pull_request:
+    paths:
+      - "terraform/**"
+      - "services/services.json"
+      - ".github/workflows/terraform-plan.yml"
+  push:
+    branches: [main]
+    paths:
+      - "terraform/**"
+      - "services/services.json"
+
+permissions:
+  id-token: write
+  contents: read
+  pull-requests: write   # to post the plan comment
+
+env:
+  AWS_REGION: ap-south-1
+  TF_VERSION: "1.9.8"
+
+jobs:
+  validate:
+    name: fmt + validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: terraform fmt
+        run: terraform fmt -check -recursive -diff terraform/
+
+      - name: terraform init (no backend)
+        # -backend=false: validation needs the providers, not the state. This
+        # is what lets validate run on a fork PR with no AWS access at all.
+        working-directory: terraform
+        run: terraform init -backend=false -input=false
+
+      - name: terraform validate
+        working-directory: terraform
+        run: terraform validate -no-color
+
+      - name: validate the bootstrap stack too
+        working-directory: terraform/bootstrap
+        run: |
+          terraform init -backend=false -input=false
+          terraform validate -no-color
+
+      - name: tflint
+        uses: terraform-linters/setup-tflint@v4
+        with:
+          tflint_version: v0.53.0
+      - run: tflint --recursive --minimum-failure-severity=error
+        working-directory: terraform
+
+  plan:
+    name: plan
+    needs: validate
+    runs-on: ubuntu-latest
+    # Fork PRs are still skipped. The plan role cannot CHANGE anything, but it
+    # can enumerate IAM roles and EC2 metadata across the account, and a fork's
+    # OIDC subject is indistinguishable from a branch PR's — so the trust
+    # policy cannot draw this line and the workflow has to.
+    if: github.event.pull_request.head.repo.full_name == github.repository || github.event_name == 'push'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          # The PLAN role, not the deploy role. A plan reads; giving it write
+          # permissions was a privilege it never needed and a blast radius it
+          # did not have to carry.
+          role-to-assume: ${{ vars.AWS_PLAN_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: gha-tfplan-${{ github.run_id }}
+
+      - name: terraform init
+        working-directory: terraform
+        run: |
+          terraform init -input=false \
+            -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" \
+            -backend-config="region=${{ env.AWS_REGION }}" \
+            -backend-config="use_lockfile=true"
+
+      - id: plan
+        name: terraform plan
+        working-directory: terraform
+        env:
+          TF_VAR_operator_cidr: ${{ vars.OPERATOR_CIDR }}
+          TF_VAR_budget_notification_email: ${{ vars.BUDGET_EMAIL }}
+        run: |
+          set -euo pipefail
+          # -lock=false: a plan takes a read lock that would block a concurrent
+          # apply for no reason. It writes nothing.
+          terraform plan -no-color -input=false -lock=false -out=tfplan \
+            | tee plan.txt
+          {
+            echo 'stdout<<PLANEOF'
+            tail -c 60000 plan.txt
+            echo 'PLANEOF'
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Comment the plan on the PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        env:
+          PLAN: ${{ steps.plan.outputs.stdout }}
+        with:
+          script: |
+            const body = [
+              '### Terraform plan',
+              '',
+              '<details><summary>Show plan</summary>',
+              '',
+              '```terraform',
+              process.env.PLAN,
+              '```',
+              '',
+              '</details>',
+              '',
+              '_Plan only. Apply is a local, human-run step — see docs/runbook.md._',
+            ].join('\n');
+            await github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body,
+            });

@@ -1,0 +1,220 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1140 830" width="1140" height="830" font-family="ui-sans-serif, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
+  <title>AutoDeployX architecture</title>
+  <desc>GitHub Actions authenticates to AWS with OIDC, pushes signed images to ECR, and updates ECS Fargate services behind one Application Load Balancer. Each task runs nginx and uvicorn in one awsvpc namespace, talking to RDS Postgres and Secrets Manager. CloudWatch collects logs, alarms and SLO burn rate. All of it is defined in Terraform.</desc>
+
+  <style>
+    /* Graphite — the house dark theme. One accent (#C6F432), used on roughly
+       5% of the surface: the title tick, the live path, the one box that
+       matters. Elevation by surface step and 1px borders, never shadows. */
+    :root{
+      --bg:#0A0B0D; --panel:#111317; --panel2:#171A1F;
+      --line:#23262D; --line-strong:#343842;
+      --text:#E8EAED; --muted:#9097A1; --subtle:#5F6670;
+      --accent:#C6F432; --accent-tint:rgba(198,244,50,0.12);
+      --info:#60A5FA; --success:#34D399; --warning:#FBBF24; --danger:#F87171;
+    }
+    .bg{fill:var(--bg)}
+    .panel{fill:var(--panel);stroke:var(--line);stroke-width:1;rx:10}
+    .panel2{fill:var(--panel2);stroke:var(--line);stroke-width:1;rx:8}
+    .t{fill:var(--text)}
+    .m{fill:var(--muted)}
+    .b{fill:var(--info)} .g{fill:var(--success)} .a{fill:var(--warning)}
+    .r{fill:var(--danger)} .v{fill:var(--accent)}
+    /* Signature: uppercase mono section labels, 11px, +0.08em tracking. */
+    .h{font-size:11px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;
+       font-family:ui-monospace,'Geist Mono','SF Mono',Menlo,monospace}
+    .n{font-size:14px;font-weight:600;letter-spacing:-0.01em}
+    .s{font-size:11.5px}
+    .xs{font-size:10.5px}
+    .mono{font-family:ui-monospace,'Geist Mono','SF Mono',Menlo,Consolas,monospace}
+    .edge{stroke:var(--line-strong);stroke-width:1.25;fill:none}
+    .edge-b{stroke:var(--accent);stroke-width:2;fill:none}
+    .edge-g{stroke:var(--success);stroke-width:2;fill:none}
+    .dash{stroke-dasharray:5 4}
+  </style>
+
+  <defs>
+    <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="var(--line-strong)"/>
+    </marker>
+    <marker id="arb" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="var(--accent)"/>
+    </marker>
+    <marker id="arg" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="var(--success)"/>
+    </marker>
+  </defs>
+
+  <rect class="bg" x="0" y="0" width="1140" height="830"/>
+
+  <!-- ══ title ══ -->
+  <rect x="40" y="26" width="2" height="10" fill="var(--accent)"/>
+  <text class="t" x="52" y="36" font-size="11" font-weight="500" letter-spacing="0.08em" font-family="ui-monospace, monospace">DEPLOYMENT PIPELINE</text>
+  <text class="t" x="40" y="66" font-size="22" font-weight="600" letter-spacing="-0.02em">AutoDeployX</text>
+  <text class="m s" x="40" y="86" font-size="12.5">git push to a health-checked public URL, with automatic rollback. Every box below is defined in Terraform.</text>
+
+  <!-- ══ GitHub Actions ══ -->
+  <rect class="panel" x="40" y="92" width="810" height="168"/>
+  <text class="m h" x="60" y="118">GitHub Actions</text>
+  <text class="m xs mono" x="60" y="136">concurrency: one deploy per ref · cancel-in-progress: false</text>
+
+  <g class="mono">
+    <rect class="panel2" x="60" y="150" width="86" height="46"/>
+    <text class="t n" x="103" y="172" text-anchor="middle" font-size="12.5">plan</text>
+    <text class="m xs" x="103" y="187" text-anchor="middle">manifest</text>
+
+    <rect class="panel2" x="156" y="150" width="86" height="46"/>
+    <text class="t n" x="199" y="172" text-anchor="middle" font-size="12.5">test</text>
+    <text class="m xs" x="199" y="187" text-anchor="middle">ruff + pytest</text>
+
+    <rect class="panel2" x="252" y="150" width="86" height="46"/>
+    <text class="t n" x="295" y="172" text-anchor="middle" font-size="12.5">build</text>
+    <text class="m xs" x="295" y="187" text-anchor="middle">buildx cache</text>
+
+    <rect class="panel2" x="348" y="150" width="86" height="46"/>
+    <text class="t n" x="391" y="172" text-anchor="middle" font-size="12.5">scan</text>
+    <text class="m xs" x="391" y="187" text-anchor="middle">Trivy gate</text>
+
+    <rect class="panel2" x="444" y="150" width="86" height="46"/>
+    <text class="t n" x="487" y="172" text-anchor="middle" font-size="12.5">sign</text>
+    <text class="m xs" x="487" y="187" text-anchor="middle">cosign + SBOM</text>
+
+    <rect class="panel2" x="540" y="150" width="86" height="46"/>
+    <text class="t n" x="583" y="172" text-anchor="middle" font-size="12.5">push</text>
+    <text class="m xs" x="583" y="187" text-anchor="middle">ECR :SHA</text>
+
+    <rect class="panel2" x="636" y="150" width="86" height="46"/>
+    <text class="t n" x="679" y="172" text-anchor="middle" font-size="12.5">deploy</text>
+    <text class="m xs" x="679" y="187" text-anchor="middle">rolloutState</text>
+
+    <rect class="panel2" x="732" y="150" width="98" height="46"/>
+    <text class="t n" x="781" y="172" text-anchor="middle" font-size="12.5">smoke</text>
+    <text class="m xs" x="781" y="187" text-anchor="middle">SHA matches</text>
+  </g>
+
+  <g class="edge" marker-end="url(#ar)">
+    <path d="M146,173 L154,173"/><path d="M242,173 L250,173"/>
+    <path d="M338,173 L346,173"/><path d="M434,173 L442,173"/>
+    <path d="M530,173 L538,173"/><path d="M626,173 L634,173"/>
+    <path d="M722,173 L730,173"/>
+  </g>
+
+  <text class="m xs" x="60" y="222">Scan and sign happen BEFORE the push: a vulnerable image never becomes pullable, and the deploy job verifies the</text>
+  <text class="m xs" x="60" y="238">signature AND the certificate identity before ECS is told to run anything.</text>
+
+  <!-- ══ Terraform ══ -->
+  <rect class="panel" x="874" y="92" width="226" height="168"/>
+  <text class="m h" x="894" y="118">Terraform</text>
+  <text class="m s" x="894" y="140">9 modules · S3 remote state</text>
+  <text class="m s" x="894" y="157">+ S3-native locking</text>
+  <text class="m xs mono" x="894" y="181">networking · ecr · iam</text>
+  <text class="m xs mono" x="894" y="196">rds · alb · ecs-service</text>
+  <text class="m xs mono" x="894" y="211">observability · budgets · migrations</text>
+  <text class="m xs" x="894" y="236">Plan on every PR.</text>
+  <text class="m xs" x="894" y="250">Apply is never unattended.</text>
+
+  <!-- OIDC arrow -->
+  <path class="edge-b" d="M445,262 L445,306" marker-end="url(#arb)"/>
+  <text class="v s" x="458" y="282" font-weight="650">OIDC</text>
+  <text class="m xs" x="458" y="297">short-lived STS · no stored key</text>
+
+  <!-- ══ AWS ══ -->
+  <rect class="panel" x="40" y="312" width="1060" height="436"/>
+  <text class="m h" x="60" y="338">AWS · ap-south-1</text>
+  <text class="m xs mono" x="60" y="356">VPC 10.0.0.0/16 · 2 public subnets · 3 security groups chained BY ID · ARM64 Fargate</text>
+
+  <!-- internet -->
+  <rect class="panel2" x="62" y="380" width="112" height="44"/>
+  <text class="t n" x="118" y="400" text-anchor="middle" font-size="12.5">Internet</text>
+  <text class="m xs" x="118" y="415" text-anchor="middle">0.0.0.0/0</text>
+
+  <!-- ALB -->
+  <rect class="panel2" x="206" y="372" width="212" height="128"/>
+  <text class="t n" x="312" y="396" text-anchor="middle">Application Load Balancer</text>
+  <text class="m xs mono" x="222" y="418">:80   → finsight</text>
+  <text class="m xs mono" x="222" y="434">:8080 → strategysphere</text>
+  <text class="m xs mono" x="222" y="456">or, with a domain set:</text>
+  <text class="v xs mono" x="222" y="472">:443 host-based + :80 → 301</text>
+  <text class="m xs" x="222" y="490">health: /api/health · target_type = ip</text>
+
+  <path class="edge" d="M174,402 L204,402" marker-end="url(#ar)"/>
+
+  <!-- ECS task -->
+  <rect class="panel2" x="450" y="372" width="286" height="128"/>
+  <text class="t n" x="593" y="396" text-anchor="middle">ECS Fargate task · awsvpc</text>
+
+  <rect class="panel" x="466" y="408" width="120" height="40"/>
+  <text class="t" x="526" y="426" text-anchor="middle" font-size="12" font-weight="650">web</text>
+  <text class="m xs mono" x="526" y="440" text-anchor="middle">nginx :80</text>
+
+  <rect class="panel" x="600" y="408" width="120" height="40"/>
+  <text class="t" x="660" y="426" text-anchor="middle" font-size="12" font-weight="650">api</text>
+  <text class="m xs mono" x="660" y="440" text-anchor="middle">uvicorn :8000</text>
+
+  <path class="edge" d="M586,428 L598,428" marker-end="url(#ar)"/>
+  <text class="m xs mono" x="593" y="468" text-anchor="middle">127.0.0.1:8000 — one network namespace</text>
+  <text class="m xs" x="593" y="486" text-anchor="middle">API port exposed nowhere. dependsOn: HEALTHY, not START.</text>
+
+  <path class="edge" d="M418,436 L448,436" marker-end="url(#ar)"/>
+
+  <!-- circuit breaker callout -->
+  <rect class="panel2" x="450" y="516" width="286" height="66"/>
+  <text class="r n" x="466" y="538" font-size="12.5">deployment_circuit_breaker</text>
+  <text class="m xs mono" x="466" y="554">enable = true · rollback = true</text>
+  <text class="m xs" x="466" y="571">Failed health checks → previous revision restored</text>
+  <path class="edge dash" d="M593,502 L593,514" marker-end="url(#ar)"/>
+
+  <!-- data stores -->
+  <rect class="panel2" x="768" y="372" width="150" height="76"/>
+  <text class="t n" x="843" y="396" text-anchor="middle" font-size="12.5">RDS Postgres</text>
+  <text class="m xs mono" x="843" y="412" text-anchor="middle">db.t3.micro</text>
+  <text class="m xs" x="843" y="428" text-anchor="middle">one instance,</text>
+  <text class="m xs" x="843" y="441" text-anchor="middle">a database per service</text>
+
+  <rect class="panel2" x="768" y="460" width="150" height="66"/>
+  <text class="t n" x="843" y="484" text-anchor="middle" font-size="12.5">Secrets Manager</text>
+  <text class="m xs" x="843" y="500" text-anchor="middle">injected by ARN at</text>
+  <text class="m xs" x="843" y="514" text-anchor="middle">task start, never in an image</text>
+
+  <path class="edge" d="M736,410 L766,410" marker-end="url(#ar)"/>
+  <path class="edge" d="M736,452 L752,452 L752,492 L766,492" marker-end="url(#ar)"/>
+
+  <!-- ECR -->
+  <rect class="panel2" x="768" y="538" width="150" height="62"/>
+  <text class="t n" x="843" y="562" text-anchor="middle" font-size="12.5">ECR</text>
+  <text class="m xs mono" x="843" y="578" text-anchor="middle">IMMUTABLE tags</text>
+  <text class="m xs" x="843" y="592" text-anchor="middle">keep last 10 · signed</text>
+
+  <!-- CloudWatch -->
+  <rect class="panel2" x="950" y="372" width="130" height="228"/>
+  <text class="t n" x="1015" y="396" text-anchor="middle" font-size="12.5">CloudWatch</text>
+  <text class="m xs" x="966" y="420">logs, 7-day retention</text>
+  <text class="m xs" x="966" y="438">7 threshold alarms</text>
+  <text class="m xs" x="966" y="456">SLO burn rate</text>
+  <text class="m xs" x="966" y="470">fast 14.4×/1h</text>
+  <text class="m xs" x="966" y="484">slow 6×/6h</text>
+  <text class="m xs" x="966" y="502">1 dashboard</text>
+  <text class="m xs" x="966" y="526">No custom metric is</text>
+  <text class="m xs" x="966" y="540">published — burn rate</text>
+  <text class="m xs" x="966" y="554">is metric math over</text>
+  <text class="m xs" x="966" y="568">free ALB metrics.</text>
+  <path class="edge dash" d="M918,470 L948,470" marker-end="url(#ar)"/>
+
+  <!-- security groups -->
+  <rect class="panel2" x="62" y="516" width="356" height="84"/>
+  <text class="t n" x="78" y="538" font-size="12.5">Security groups, chained by ID</text>
+  <text class="m xs mono" x="78" y="558">internet ──► [alb] ──► [tasks] ──► [rds]</text>
+  <text class="m xs mono" x="78" y="574">  :80,:443   :80 from    :5432 from tasks SG</text>
+  <text class="m xs mono" x="78" y="588">  from 0/0   alb SG only  + one operator /32</text>
+
+  <!-- bottom band -->
+  <rect class="panel2" x="62" y="618" width="1018" height="112"/>
+  <text class="m h" x="78" y="642">What this costs, and what is deliberately absent</text>
+  <text class="m s" x="78" y="666">~$0.033/hour running · $0.00 destroyed · ~$0.10 for a three-hour demo</text>
+  <text class="m xs" x="78" y="690">No NAT gateway by default (~$32/mo, or ~$3/mo as an instance) · no EKS (~$73/mo) · no Container Insights · no multi-AZ RDS</text>
+  <text class="m xs" x="78" y="708">Each absence is an architecture decision record in docs/adr/, and several are enforced by policy/autodeployx.rego —</text>
+  <text class="m xs" x="78" y="722">a NAT gateway appearing in the Terraform fails the build, because that is the claim the README makes.</text>
+
+  <text class="m xs" x="40" y="790">Budget alarms at $5/$10/$20 plus Cost Anomaly Detection are the FIRST module applied, before anything billable exists.</text>
+  <text class="m xs" x="40" y="808">Diagram source: docs/diagrams/architecture.svg</text>
+</svg>

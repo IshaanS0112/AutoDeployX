@@ -1,0 +1,58 @@
+# syntax=docker/dockerfile:1.7
+# AutoDeployX — React (Vite) build served by nginx.
+
+ARG NODE_VERSION=22
+
+# ---- Build stage ----------------------------------------------------------
+FROM node:${NODE_VERSION}-alpine AS build
+
+WORKDIR /app
+
+# Lockfile first — same cache-ordering argument as the API image. `npm ci`
+# (not `npm install`) so the build is reproducible from the lockfile and fails
+# loudly if package.json and the lock have drifted.
+COPY frontend/package.json frontend/package-lock.json ./
+RUN --mount=type=cache,target=/root/.npm \
+    npm ci --no-audit --no-fund
+
+COPY frontend/ ./
+
+# Vite inlines these at build time; they cannot be injected at runtime.
+# The app defaults to a same-origin "/api" base, which is what nginx serves,
+# so VITE_API_BASE_URL is deliberately left unset.
+ARG GIT_SHA=unknown
+ENV VITE_GIT_SHA=${GIT_SHA}
+
+RUN npm run build
+
+# ---- Runtime stage --------------------------------------------------------
+FROM nginx:1.27-alpine AS runtime
+
+ARG GIT_SHA=unknown
+ENV GIT_SHA=${GIT_SHA}
+
+# Drop the stock config; ours is the only server block.
+RUN rm -f /etc/nginx/conf.d/default.conf
+
+COPY --from=build /app/dist /usr/share/nginx/html
+# Staged into the build context by whatever is driving the build — the CI workflow,
+# seed-images.sh, local-up.sh or measure-image-size.sh — exactly the way
+# .dockerignore is (trap 14).
+COPY nginx.ecs.conf /etc/nginx/conf.d/default.conf
+
+# nginx:alpine ships a non-root `nginx` user but the stock image still starts as
+# root to bind :80 and drop privileges per-worker.
+
+# Write the deployed SHA where a human (or smoke-test.sh) can read it back off
+# a live URL without hitting the API.
+RUN printf '%s\n' "${GIT_SHA}" > /usr/share/nginx/html/version.txt
+
+EXPOSE 80
+
+# Exec form, not shell form: hadolint's DL3025 fails the CI lint gate on the
+# shell form, and `wget --spider` already exits non-zero on a bad response, so
+# the `|| exit 1` the shell form needed was redundant anyway.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD ["wget", "--quiet", "--spider", "--tries=1", "http://127.0.0.1/nginx-health"]
+
+CMD ["nginx", "-g", "daemon off;"]

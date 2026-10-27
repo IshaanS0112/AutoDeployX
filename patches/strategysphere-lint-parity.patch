@@ -1,0 +1,1166 @@
+diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml
+index ff784b9..ebfd64d 100644
+--- a/.github/workflows/ci.yml
++++ b/.github/workflows/ci.yml
+@@ -31,6 +31,17 @@ jobs:
+       - name: Install dependencies
+         run: pip install -r requirements-dev.txt
+ 
++      - name: Lint (ruff)
++        # Pinned, not floating. A linter that upgrades itself turns an
++        # unrelated release into a red build on a branch nobody touched.
++        # `format --check` is separate from `check` on purpose: the first is
++        # correctness rules, the second is layout, and conflating them makes a
++        # formatting diff look like a lint failure.
++        run: |
++          pip install ruff==0.8.4
++          ruff check app tests
++          ruff format --check app tests
++
+       - name: Run tests
+         # No services block. The models declare JSONB and UUID as dialect
+         # variants, so the API tests exercise the real app against SQLite and
+diff --git a/backend/app/config.py b/backend/app/config.py
+index a393d11..11ad1e5 100644
+--- a/backend/app/config.py
++++ b/backend/app/config.py
+@@ -31,11 +31,11 @@ class Settings(BaseSettings):
+     # A metric is only called a strength or a weakness once it clears a
+     # relative band around its benchmark. Without a dead zone every company is
+     # simultaneously strong and weak at everything by a rounding error.
+-    swot_neutral_band_pct: float = 5.0     # +/- this % of benchmark = not a factor
+-    swot_score_2_pct: float = 10.0         # relative deviation for impact_score 2
++    swot_neutral_band_pct: float = 5.0  # +/- this % of benchmark = not a factor
++    swot_score_2_pct: float = 10.0  # relative deviation for impact_score 2
+     swot_score_3_pct: float = 25.0
+     swot_score_4_pct: float = 50.0
+-    swot_score_5_pct: float = 100.0        # >= this deviation -> impact_score 5
++    swot_score_5_pct: float = 100.0  # >= this deviation -> impact_score 5
+ 
+     # Peer-derived benchmarks need enough peers to mean anything. Below this
+     # count the engine falls back to the industry benchmark table and records
+@@ -75,7 +75,7 @@ class Settings(BaseSettings):
+     # The penalty term below corrects for that. Setting it to 0.0 reproduces
+     # the original formula exactly; see docs/architecture.md.
+     swot_weakness_penalty: float = 0.5
+-    swot_neutral_impact: float = 3.0       # weakness level at which no penalty applies
++    swot_neutral_impact: float = 3.0  # weakness level at which no penalty applies
+ 
+     # --- Pricing ------------------------------------------------------------
+     # "target_margin_pct" is ambiguous shorthand: cost x (1 + m) is a MARKUP,
+@@ -83,13 +83,13 @@ class Settings(BaseSettings):
+     # 28.6% margin, not 40%. MARGIN basis (cost / (1 - m)) yields 166.67, which
+     # actually delivers 40%. Default is the correct reading; MARKUP remains
+     # available per-request. Documented in docs/architecture.md.
+-    pricing_default_margin_basis: str = "MARGIN"     # MARGIN | MARKUP
++    pricing_default_margin_basis: str = "MARGIN"  # MARGIN | MARKUP
+ 
+-    pricing_w_cost_plus: float = 0.5       # weight on the cost-plus anchor
+-    pricing_w_competitor: float = 0.5      # weight on the competitor benchmark
+-    pricing_value_coefficient: float = 0.10   # k in 1 + k*(feature delta)
++    pricing_w_cost_plus: float = 0.5  # weight on the cost-plus anchor
++    pricing_w_competitor: float = 0.5  # weight on the competitor benchmark
++    pricing_value_coefficient: float = 0.10  # k in 1 + k*(feature delta)
+     pricing_value_adjustment_cap: float = 0.30  # clamp adjustment to +/- 30%
+-    pricing_range_spread: float = 0.10     # +/- 10% band around the point estimate
++    pricing_range_spread: float = 0.10  # +/- 10% band around the point estimate
+ 
+     # Competitor prices that disagree wildly make the benchmark meaningless.
+     # Above this coefficient of variation the result is flagged low-confidence.
+@@ -158,9 +158,7 @@ class Settings(BaseSettings):
+ 
+         pricing_sum = self.pricing_w_cost_plus + self.pricing_w_competitor
+         if abs(pricing_sum - 1.0) > 1e-6:
+-            raise ValueError(
+-                f"Pricing anchor weights must sum to 1.0, got {pricing_sum:.4f}."
+-            )
++            raise ValueError(f"Pricing anchor weights must sum to 1.0, got {pricing_sum:.4f}.")
+ 
+         if self.quadrant_low_threshold >= self.quadrant_high_threshold:
+             raise ValueError("quadrant_low_threshold must be below quadrant_high_threshold")
+@@ -169,9 +167,7 @@ class Settings(BaseSettings):
+             raise ValueError("pricing_default_margin_basis must be MARGIN or MARKUP")
+ 
+         if self.porter_attractive_below >= self.porter_unattractive_above:
+-            raise ValueError(
+-                "porter_attractive_below must sit under porter_unattractive_above"
+-            )
++            raise ValueError("porter_attractive_below must sit under porter_unattractive_above")
+ 
+         if not 0.0 < self.porter_min_input_coverage <= 1.0:
+             raise ValueError("porter_min_input_coverage must be in (0, 1]")
+diff --git a/backend/app/enums.py b/backend/app/enums.py
+index dcca45c..d74a44e 100644
+--- a/backend/app/enums.py
++++ b/backend/app/enums.py
+@@ -44,9 +44,9 @@ class MarginBasis(str, Enum):
+ class BenchmarkBasis(str, Enum):
+     """Where a SWOT metric's comparison point came from."""
+ 
+-    PEER_SET = "PEER_SET"           # median of the competitors supplied
+-    INDUSTRY_TABLE = "INDUSTRY_TABLE"   # configured industry reference band
+-    UNAVAILABLE = "UNAVAILABLE"     # metric skipped, no benchmark to compare to
++    PEER_SET = "PEER_SET"  # median of the competitors supplied
++    INDUSTRY_TABLE = "INDUSTRY_TABLE"  # configured industry reference band
++    UNAVAILABLE = "UNAVAILABLE"  # metric skipped, no benchmark to compare to
+ 
+ 
+ class NarrativeSource(str, Enum):
+@@ -58,6 +58,7 @@ class NarrativeSource(str, Enum):
+ # V2
+ # --------------------------------------------------------------------------
+ 
++
+ class PorterForce(str, Enum):
+     """The five forces, named as Porter named them (Porter, 1979)."""
+ 
+@@ -77,18 +78,18 @@ class ForceSource(str, Enum):
+     mode V1 was built to avoid.
+     """
+ 
+-    COMPUTED = "COMPUTED"                # derived from stored quantitative data
+-    PARTIALLY_COMPUTED = "PARTIALLY_COMPUTED"   # data-derived base, analyst adjustment
+-    ANALYST_INPUT = "ANALYST_INPUT"      # supplied judgement, carried through untouched
+-    UNAVAILABLE = "UNAVAILABLE"          # neither available; force omitted, not guessed
++    COMPUTED = "COMPUTED"  # derived from stored quantitative data
++    PARTIALLY_COMPUTED = "PARTIALLY_COMPUTED"  # data-derived base, analyst adjustment
++    ANALYST_INPUT = "ANALYST_INPUT"  # supplied judgement, carried through untouched
++    UNAVAILABLE = "UNAVAILABLE"  # neither available; force omitted, not guessed
+ 
+ 
+ class IndustryAttractiveness(str, Enum):
+     """Porter's read: the weaker the five forces, the more profitable the industry."""
+ 
+-    ATTRACTIVE = "ATTRACTIVE"            # weak forces, structural profit available
++    ATTRACTIVE = "ATTRACTIVE"  # weak forces, structural profit available
+     MODERATE = "MODERATE"
+-    UNATTRACTIVE = "UNATTRACTIVE"        # strong forces, profit competed away
++    UNATTRACTIVE = "UNATTRACTIVE"  # strong forces, profit competed away
+ 
+ 
+ class TrendDirection(str, Enum):
+@@ -101,6 +102,6 @@ class TrendDirection(str, Enum):
+ class SensitivityVerdict(str, Enum):
+     """How robust a quadrant placement is to a single-input change."""
+ 
+-    ROBUST = "ROBUST"                    # no single input flips it within its plausible range
+-    FRAGILE = "FRAGILE"                  # at least one input flips it with a modest change
+-    KNIFE_EDGE = "KNIFE_EDGE"            # already borderline, or flips on a trivial change
++    ROBUST = "ROBUST"  # no single input flips it within its plausible range
++    FRAGILE = "FRAGILE"  # at least one input flips it with a modest change
++    KNIFE_EDGE = "KNIFE_EDGE"  # already borderline, or flips on a trivial change
+diff --git a/backend/app/main.py b/backend/app/main.py
+index 76fa8ca..ee08a4f 100644
+--- a/backend/app/main.py
++++ b/backend/app/main.py
+@@ -7,7 +7,6 @@ from contextlib import asynccontextmanager
+ 
+ from fastapi import FastAPI
+ from fastapi.middleware.cors import CORSMiddleware
+-
+ from sqlalchemy import inspect
+ 
+ from app.config import get_settings
+@@ -15,9 +14,7 @@ from app.db.session import engine
+ from app.routers import analysis, companies, strategy_v2
+ from app.services.benchmarks import load_industry_benchmarks
+ 
+-logging.basicConfig(
+-    level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
+-)
++logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+ logger = logging.getLogger("strategysphere")
+ 
+ 
+@@ -154,9 +151,7 @@ def methodology() -> dict[str, object]:
+             "attractive_below": settings.porter_attractive_below,
+             "unattractive_above": settings.porter_unattractive_above,
+             "min_input_coverage": settings.porter_min_input_coverage,
+-            "composite_status": (
+-                "PROJECT-DEFINED COMPOSITE, not part of Porter's framework"
+-            ),
++            "composite_status": ("PROJECT-DEFINED COMPOSITE, not part of Porter's framework"),
+         },
+         "sensitivity": {
+             "method": "analytic - the attractiveness score is linear in its axes",
+diff --git a/backend/app/models/company.py b/backend/app/models/company.py
+index 684f001..f115d0c 100644
+--- a/backend/app/models/company.py
++++ b/backend/app/models/company.py
+@@ -60,7 +60,7 @@ class Company(Base):
+     # row stays valid and simply has no timeline. A company with no entity_key
+     # is a standalone snapshot, which is the V1 behaviour exactly.
+     entity_key: Mapped[str | None] = mapped_column(String(120), index=True)
+-    period_label: Mapped[str | None] = mapped_column(String(40))     # "FY2024", "Q3-2025"
++    period_label: Mapped[str | None] = mapped_column(String(40))  # "FY2024", "Q3-2025"
+     # Sort key for the timeline. Label alone will not order correctly:
+     # "FY2024" < "FY9999" is fine but "Q3-2025" vs "Q11-2025" is not.
+     period_end: Mapped[date | None] = mapped_column(Date)
+diff --git a/backend/app/routers/companies.py b/backend/app/routers/companies.py
+index e3ebf2b..9d864da 100644
+--- a/backend/app/routers/companies.py
++++ b/backend/app/routers/companies.py
+@@ -60,8 +60,6 @@ def add_competitor(company: CurrentCompany, payload: CompetitorCreate, db: DbSes
+     return competitor
+ 
+ 
+-@router.get(
+-    "/{company_id}/competitors", response_model=list[CompetitorOut], tags=["competitors"]
+-)
++@router.get("/{company_id}/competitors", response_model=list[CompetitorOut], tags=["competitors"])
+ def list_competitors(company: CurrentCompany):
+     return company.competitors
+diff --git a/backend/app/routers/strategy_v2.py b/backend/app/routers/strategy_v2.py
+index 898f38f..d240209 100644
+--- a/backend/app/routers/strategy_v2.py
++++ b/backend/app/routers/strategy_v2.py
+@@ -35,6 +35,7 @@ _NEEDS_MATRIX = (
+ # Porter's Five Forces
+ # --------------------------------------------------------------------------
+ 
++
+ @router.post("/companies/{company_id}/porters-analysis", response_model=PortersAnalysisOut)
+ def create_porters_analysis(company: CurrentCompany, db: DbSession, settings: AppSettings):
+     """Score the five forces.
+@@ -68,6 +69,7 @@ def get_porters_analysis(company: CurrentCompany):
+ # Sensitivity
+ # --------------------------------------------------------------------------
+ 
++
+ @router.get("/companies/{company_id}/sensitivity")
+ def get_sensitivity(company: CurrentCompany, settings: AppSettings):
+     """Exact minimum single-input change that would flip the quadrant.
+@@ -84,6 +86,7 @@ def get_sensitivity(company: CurrentCompany, settings: AppSettings):
+ # Scenarios
+ # --------------------------------------------------------------------------
+ 
++
+ @router.post(
+     "/companies/{company_id}/scenarios",
+     response_model=ScenarioOut,
+@@ -126,9 +129,7 @@ def list_scenarios(company: CurrentCompany):
+ def delete_scenario(company: CurrentCompany, scenario_id: str, db: DbSession):
+     match = [s for s in company.scenarios if str(s.id) == scenario_id]
+     if not match:
+-        raise HTTPException(
+-            status_code=status.HTTP_404_NOT_FOUND, detail="Scenario not found."
+-        )
++        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Scenario not found.")
+     db.delete(match[0])
+     db.commit()
+ 
+@@ -137,6 +138,7 @@ def delete_scenario(company: CurrentCompany, scenario_id: str, db: DbSession):
+ # Multi-period timeline
+ # --------------------------------------------------------------------------
+ 
++
+ @router.get("/entities")
+ def list_entities(db: DbSession):
+     """Entity keys with more than one period, i.e. the ones a timeline exists for."""
+@@ -176,6 +178,7 @@ def get_entity_timeline(
+ # Validation harness
+ # --------------------------------------------------------------------------
+ 
++
+ @router.post("/validation/backtest")
+ def run_backtest(payload: ValidationRequest, settings: AppSettings):
+     """Score a labelled panel of companies against realised outcomes.
+diff --git a/backend/app/schemas/__init__.py b/backend/app/schemas/__init__.py
+index c38e553..8979501 100644
+--- a/backend/app/schemas/__init__.py
++++ b/backend/app/schemas/__init__.py
+@@ -24,7 +24,7 @@ FEATURE_SCORE_MAX = 5.0
+ def _validate_feature_scores(scores: dict[str, Any]) -> dict[str, float]:
+     cleaned: dict[str, float] = {}
+     for name, value in (scores or {}).items():
+-        if isinstance(value, bool) or not isinstance(value, (int, float)):
++        if isinstance(value, bool) or not isinstance(value, int | float):
+             raise ValueError(f"feature_scores['{name}'] must be a number")
+         if not FEATURE_SCORE_MIN <= float(value) <= FEATURE_SCORE_MAX:
+             raise ValueError(
+@@ -58,7 +58,7 @@ class PeriodFields(BaseModel):
+     )
+ 
+     @model_validator(mode="after")
+-    def _period_needs_a_date(self) -> "PeriodFields":
++    def _period_needs_a_date(self) -> PeriodFields:
+         if self.entity_key and self.period_end is None:
+             raise ValueError(
+                 "entity_key was supplied without period_end. A period with no end "
+@@ -94,9 +94,12 @@ class CompanyCreate(PeriodFields):
+     @classmethod
+     def check_market_share(cls, value: dict[str, Any]) -> dict[str, Any]:
+         share = value.get("market_share_pct")
+-        if isinstance(share, (int, float)) and not isinstance(share, bool):
+-            if not 0 <= float(share) <= 100:
+-                raise ValueError("financial_data.market_share_pct must be between 0 and 100")
++        if (
++            isinstance(share, int | float)
++            and not isinstance(share, bool)
++            and not 0 <= float(share) <= 100
++        ):
++            raise ValueError("financial_data.market_share_pct must be between 0 and 100")
+         return value
+ 
+ 
+@@ -174,7 +177,9 @@ class MarketAttractivenessOut(BaseModel):
+ 
+ 
+ class PricingRequest(BaseModel):
+-    cost_base: float = Field(gt=0, description="Unit cost in the same currency as competitor prices")
++    cost_base: float = Field(
++        gt=0, description="Unit cost in the same currency as competitor prices"
++    )
+     # Upper bound of 0.95 rather than 1.0: on MARGIN basis, cost / (1 - m) at
+     # m = 0.99 returns 100x cost, which is arithmetically fine and
+     # commercially absurd. 0.95 is already a 20x multiple.
+@@ -222,7 +227,6 @@ class StrategyReportOut(BaseModel):
+ # --------------------------------------------------------------------------
+ 
+ 
+-
+ class PortersAnalysisOut(BaseModel):
+     model_config = ConfigDict(from_attributes=True)
+ 
+diff --git a/backend/app/services/analysis_pipeline.py b/backend/app/services/analysis_pipeline.py
+index bfff11e..9df626f 100644
+--- a/backend/app/services/analysis_pipeline.py
++++ b/backend/app/services/analysis_pipeline.py
+@@ -12,12 +12,11 @@ from __future__ import annotations
+ import logging
+ from typing import Any
+ 
++from sqlalchemy import select
+ from sqlalchemy.orm import Session
+ 
+ from app.config import Settings
+ from app.enums import MarginBasis
+-from sqlalchemy import select
+-
+ from app.models import (
+     Company,
+     Competitor,
+@@ -385,9 +384,7 @@ def run_scenario_for(
+ def build_entity_timeline(db: Session, entity_key: str, settings: Settings) -> dict:
+     from app.services.timeline import build_timeline
+ 
+-    companies = list(
+-        db.scalars(select(Company).where(Company.entity_key == entity_key))
+-    )
++    companies = list(db.scalars(select(Company).where(Company.entity_key == entity_key)))
+     rows: list[dict] = []
+     for company in companies:
+         latest = company.attractiveness_results[-1] if company.attractiveness_results else None
+diff --git a/backend/app/services/attractiveness_matrix.py b/backend/app/services/attractiveness_matrix.py
+index c8cf2ae..33a26d5 100644
+--- a/backend/app/services/attractiveness_matrix.py
++++ b/backend/app/services/attractiveness_matrix.py
+@@ -65,11 +65,9 @@ class AttractivenessResult:
+     calculation_basis: dict[str, Any] = field(default_factory=dict)
+ 
+ 
+-def _axis_score(
+-    raw: Any, bands: tuple[float, ...], label: str, trace: dict[str, Any]
+-) -> float:
++def _axis_score(raw: Any, bands: tuple[float, ...], label: str, trace: dict[str, Any]) -> float:
+     """Band-score a market input, falling back to neutral when absent."""
+-    if isinstance(raw, (int, float)) and not isinstance(raw, bool):
++    if isinstance(raw, int | float) and not isinstance(raw, bool):
+         score = float(band_score(float(raw), bands))
+         trace[label] = {"raw": float(raw), "score": score, "bands": list(bands), "imputed": False}
+         return score
+@@ -139,9 +137,7 @@ def compute_competitive_strength(
+             "the axis; set swot_weakness_penalty=0 to recover the original formula "
+             "whenever at least one strength was scored."
+         ),
+-        "mean_strength_impact": round(float(mean(strength_scores)), 4)
+-        if strength_scores
+-        else None,
++        "mean_strength_impact": round(float(mean(strength_scores)), 4) if strength_scores else None,
+         "mean_weakness_impact": round(raw_weakness, 4),
+         "strength_factor_count": len(strength_scores),
+         "weakness_factor_count": len(weakness_scores),
+diff --git a/backend/app/services/benchmarks.py b/backend/app/services/benchmarks.py
+index 8de9ff9..7f76d75 100644
+--- a/backend/app/services/benchmarks.py
++++ b/backend/app/services/benchmarks.py
+@@ -197,7 +197,7 @@ def peer_median(peer_financials: list[dict], metric_key: str, minimum: int) -> f
+         float(financials[metric_key])
+         for financials in peer_financials
+         if isinstance(financials, dict)
+-        and isinstance(financials.get(metric_key), (int, float))
++        and isinstance(financials.get(metric_key), int | float)
+         and not isinstance(financials.get(metric_key), bool)
+     ]
+     if len(values) < minimum:
+diff --git a/backend/app/services/market_structure.py b/backend/app/services/market_structure.py
+index 58d94d4..7a7d92d 100644
+--- a/backend/app/services/market_structure.py
++++ b/backend/app/services/market_structure.py
+@@ -65,12 +65,15 @@ class ConcentrationResult:
+ 
+ def _clean_shares(company_share: float | None, competitors: list[dict]) -> list[dict[str, Any]]:
+     shares: list[dict[str, Any]] = []
+-    if isinstance(company_share, (int, float)) and not isinstance(company_share, bool):
+-        if company_share > 0:
+-            shares.append({"name": "__focal_company__", "market_share_pct": float(company_share)})
++    if (
++        isinstance(company_share, int | float)
++        and not isinstance(company_share, bool)
++        and company_share > 0
++    ):
++        shares.append({"name": "__focal_company__", "market_share_pct": float(company_share)})
+     for competitor in competitors:
+         value = competitor.get("market_share_pct")
+-        if isinstance(value, (int, float)) and not isinstance(value, bool) and value > 0:
++        if isinstance(value, int | float) and not isinstance(value, bool) and value > 0:
+             shares.append(
+                 {
+                     "name": str(competitor.get("competitor_name", "unnamed")),
+@@ -101,7 +104,7 @@ def price_dispersion(prices: list[float]) -> float | None:
+     here: the competitor set is the whole population being described, not a
+     sample drawn from a larger one.
+     """
+-    usable = [float(p) for p in prices if isinstance(p, (int, float)) and not isinstance(p, bool)]
++    usable = [float(p) for p in prices if isinstance(p, int | float) and not isinstance(p, bool)]
+     if len(usable) < 2:
+         return None
+     average = mean(usable)
+@@ -162,7 +165,9 @@ def assess_market_structure(
+     if cv is not None:
+         if cv <= _COMMODITISED_CV:
+             dispersion_adjustment = 0.5
+-            dispersion_note = f"prices tightly clustered (CV {cv:.3f}) - commoditised, raises rivalry"
++            dispersion_note = (
++                f"prices tightly clustered (CV {cv:.3f}) - commoditised, raises rivalry"
++            )
+         elif cv >= _DIFFERENTIATED_CV:
+             dispersion_adjustment = -0.5
+             dispersion_note = f"prices widely spread (CV {cv:.3f}) - differentiated, lowers rivalry"
+diff --git a/backend/app/services/porters_engine.py b/backend/app/services/porters_engine.py
+index 3faf9a5..11ef2e5 100644
+--- a/backend/app/services/porters_engine.py
++++ b/backend/app/services/porters_engine.py
+@@ -87,7 +87,7 @@ class PortersResult:
+ def _num(raw: Any) -> float | None:
+     if isinstance(raw, bool) or raw is None:
+         return None
+-    if isinstance(raw, (int, float)):
++    if isinstance(raw, int | float):
+         return float(raw)
+     return None
+ 
+@@ -113,6 +113,7 @@ def _collect(market_data: dict, keys: list[str]) -> tuple[dict[str, float], list
+ # Force 1: competitive rivalry — fully computed
+ # --------------------------------------------------------------------------
+ 
++
+ def score_rivalry(concentration: ConcentrationResult) -> ForceResult:
+     """Reuses the intensity already derived from HHI for the GE-McKinsey axis.
+ 
+@@ -151,6 +152,7 @@ def score_rivalry(concentration: ConcentrationResult) -> ForceResult:
+ # Force 2: threat of new entrants — partially computed
+ # --------------------------------------------------------------------------
+ 
++
+ def score_new_entrants(
+     market_data: dict, concentration: ConcentrationResult, settings: Settings
+ ) -> ForceResult:
+@@ -200,8 +202,10 @@ def score_new_entrants(
+         )
+ 
+     score = _clamp(mean(components))
+-    source = ForceSource.PARTIALLY_COMPUTED if analyst and structural else (
+-        ForceSource.COMPUTED if structural else ForceSource.ANALYST_INPUT
++    source = (
++        ForceSource.PARTIALLY_COMPUTED
++        if analyst and structural
++        else (ForceSource.COMPUTED if structural else ForceSource.ANALYST_INPUT)
+     )
+     return ForceResult(
+         force=PorterForce.THREAT_OF_NEW_ENTRANTS,
+@@ -233,6 +237,7 @@ def score_new_entrants(
+ # Force 3: supplier power — partially computed
+ # --------------------------------------------------------------------------
+ 
++
+ def score_supplier_power(
+     financial_data: dict, market_data: dict, settings: Settings
+ ) -> ForceResult:
+@@ -301,6 +306,7 @@ def score_supplier_power(
+ # Forces 4 and 5: analyst input only
+ # --------------------------------------------------------------------------
+ 
++
+ def _analyst_only_force(
+     force: PorterForce, market_data: dict, keys: list[str], label: str
+ ) -> ForceResult:
+@@ -353,9 +359,8 @@ def score_substitutes(market_data: dict) -> ForceResult:
+ # Entry point
+ # --------------------------------------------------------------------------
+ 
+-def classify_attractiveness(
+-    composite: float, settings: Settings
+-) -> IndustryAttractiveness:
++
++def classify_attractiveness(composite: float, settings: Settings) -> IndustryAttractiveness:
+     """Weaker forces mean more structural profit is available to incumbents."""
+     if composite < settings.porter_attractive_below:
+         return IndustryAttractiveness.ATTRACTIVE
+@@ -408,9 +413,7 @@ def run_porters_analysis(
+             ),
+             "composite_method": "unweighted mean of the forces that could be scored",
+             "forces_scored": len(scored),
+-            "forces_unavailable": [
+-                f.force.value for f in forces if f.score is None
+-            ],
++            "forces_unavailable": [f.force.value for f in forces if f.score is None],
+             "source_breakdown": {f.force.value: f.source.value for f in forces},
+             "attractiveness_bands": {
+                 "attractive_below": settings.porter_attractive_below,
+diff --git a/backend/app/services/pricing_engine.py b/backend/app/services/pricing_engine.py
+index a3fced8..8a84528 100644
+--- a/backend/app/services/pricing_engine.py
++++ b/backend/app/services/pricing_engine.py
+@@ -85,9 +85,7 @@ def cost_plus_price(cost_base: float, target_margin_pct: float, basis: MarginBas
+ 
+ def _feature_average(scores: dict) -> float | None:
+     usable = [
+-        float(v)
+-        for v in scores.values()
+-        if isinstance(v, (int, float)) and not isinstance(v, bool)
++        float(v) for v in scores.values() if isinstance(v, int | float) and not isinstance(v, bool)
+     ]
+     return float(mean(usable)) if usable else None
+ 
+@@ -152,9 +150,7 @@ def compute_value_adjustment(
+     cap = settings.pricing_value_adjustment_cap
+     factor = max(1.0 - cap, min(1.0 + cap, raw_factor))
+ 
+-    dropped = sorted(
+-        (set(company_scores.keys()) | competitor_features) - set(shared)
+-    )
++    dropped = sorted((set(company_scores.keys()) | competitor_features) - set(shared))
+ 
+     return round(factor, 6), {
+         "applied": True,
+@@ -190,7 +186,7 @@ def run_pricing_engine(
+         float(c["price_point"])
+         for c in competitors
+         if isinstance(c, dict)
+-        and isinstance(c.get("price_point"), (int, float))
++        and isinstance(c.get("price_point"), int | float)
+         and not isinstance(c.get("price_point"), bool)
+         and c["price_point"] > 0
+     ]
+diff --git a/backend/app/services/report_generator.py b/backend/app/services/report_generator.py
+index 7a5723d..2d5933a 100644
+--- a/backend/app/services/report_generator.py
++++ b/backend/app/services/report_generator.py
+@@ -292,9 +292,7 @@ def generate_narrative(context: dict[str, Any], settings: Settings) -> dict[str,
+     try:
+         from anthropic import Anthropic
+ 
+-        client = Anthropic(
+-            api_key=settings.anthropic_api_key, timeout=settings.llm_timeout_seconds
+-        )
++        client = Anthropic(api_key=settings.anthropic_api_key, timeout=settings.llm_timeout_seconds)
+         response = client.messages.create(
+             model=settings.anthropic_model,
+             max_tokens=settings.llm_max_tokens,
+diff --git a/backend/app/services/scenario_engine.py b/backend/app/services/scenario_engine.py
+index ca1d51d..7c78393 100644
+--- a/backend/app/services/scenario_engine.py
++++ b/backend/app/services/scenario_engine.py
+@@ -108,9 +108,7 @@ def _validate_overrides(overrides: dict) -> tuple[dict, list[str]]:
+         raise ScenarioInputError("financial_data override must be an object")
+     unknown = set(financial) - ALLOWED_FINANCIAL_KEYS
+     if unknown:
+-        raise ScenarioInputError(
+-            f"Unknown financial_data override key(s): {sorted(unknown)}"
+-        )
++        raise ScenarioInputError(f"Unknown financial_data override key(s): {sorted(unknown)}")
+     if financial:
+         cleaned["financial_data"] = dict(financial)
+ 
+@@ -140,9 +138,7 @@ def _validate_overrides(overrides: dict) -> tuple[dict, list[str]]:
+     return cleaned, warnings
+ 
+ 
+-def _apply_competitor_ops(
+-    competitors: list[dict], ops: list[dict]
+-) -> tuple[list[dict], list[str]]:
++def _apply_competitor_ops(competitors: list[dict], ops: list[dict]) -> tuple[list[dict], list[str]]:
+     result = copy.deepcopy(competitors)
+     warnings: list[str] = []
+ 
+@@ -200,8 +196,8 @@ def _diff(baseline: dict[str, Any], scenario: dict[str, Any]) -> dict[str, Any]:
+     for key, base_value in baseline.items():
+         new_value = scenario.get(key)
+         numeric = (
+-            isinstance(base_value, (int, float))
+-            and isinstance(new_value, (int, float))
++            isinstance(base_value, int | float)
++            and isinstance(new_value, int | float)
+             and not isinstance(base_value, bool)
+             and not isinstance(new_value, bool)
+         )
+@@ -317,10 +313,10 @@ def describe_move(baseline_quadrant: str, scenario_quadrant: str) -> str:
+         Quadrant.INVEST_GROW.value: 2,
+     }
+     direction = (
+-        "improves" if ordering.get(scenario_quadrant, 1) > ordering.get(baseline_quadrant, 1)
++        "improves"
++        if ordering.get(scenario_quadrant, 1) > ordering.get(baseline_quadrant, 1)
+         else "deteriorates"
+     )
+     return (
+-        f"Position {direction}: {baseline_quadrant} -> {scenario_quadrant} under "
+-        f"this scenario."
++        f"Position {direction}: {baseline_quadrant} -> {scenario_quadrant} under " f"this scenario."
+     )
+diff --git a/backend/app/services/sensitivity.py b/backend/app/services/sensitivity.py
+index dd21fef..586ef26 100644
+--- a/backend/app/services/sensitivity.py
++++ b/backend/app/services/sensitivity.py
+@@ -99,9 +99,7 @@ class SensitivityResult:
+     calculation_basis: dict[str, Any] = field(default_factory=dict)
+ 
+ 
+-def _quadrant_at(
+-    attractiveness: float, strength: float, settings: Settings
+-) -> Quadrant:
++def _quadrant_at(attractiveness: float, strength: float, settings: Settings) -> Quadrant:
+     quadrant, _, _ = place_quadrant(attractiveness, strength, settings)
+     return quadrant
+ 
+@@ -257,9 +255,7 @@ def run_sensitivity_analysis(
+     # axis list in that case reports an unreachable axis as "most fragile",
+     # which is exactly backwards. Caught on the end-to-end smoke run.
+     candidates = [
+-        a
+-        for a in axes + [strength_sensitivity]
+-        if a.reachable and a.required_delta is not None
++        a for a in axes + [strength_sensitivity] if a.reachable and a.required_delta is not None
+     ]
+     binding = min(candidates, key=lambda a: abs(a.required_delta)) if candidates else None
+     smallest = abs(binding.required_delta) if binding else None
+@@ -292,9 +288,7 @@ def run_sensitivity_analysis(
+             ),
+             "formula": "required_delta = (threshold - A) / (dA/d_axis)",
+             "weights": weights,
+-            "derivatives": {
+-                a.axis: a.derivative for a in axes
+-            },
++            "derivatives": {a.axis: a.derivative for a in axes},
+             "axis_bounds": [AXIS_MIN, AXIS_MAX],
+             "thresholds": {
+                 "high": settings.quadrant_high_threshold,
+diff --git a/backend/app/services/swot_engine.py b/backend/app/services/swot_engine.py
+index 56faac1..3df257b 100644
+--- a/backend/app/services/swot_engine.py
++++ b/backend/app/services/swot_engine.py
+@@ -35,8 +35,8 @@ from app.services.market_structure import ConcentrationResult
+ 
+ # Band edges for market-level inputs, ascending. A value below the first edge
+ # scores 1; at or above the last edge scores 5.
+-MARKET_GROWTH_BANDS = (3.0, 6.0, 10.0, 15.0)          # annual %, higher better
+-MARKET_SIZE_BANDS = (1.0, 5.0, 20.0, 75.0)            # USD bn, higher better
++MARKET_GROWTH_BANDS = (3.0, 6.0, 10.0, 15.0)  # annual %, higher better
++MARKET_SIZE_BANDS = (1.0, 5.0, 20.0, 75.0)  # USD bn, higher better
+ 
+ _REGULATORY_OUTLOOK = {
+     "FAVOURABLE": (SwotCategory.OPPORTUNITY, "Regulatory outlook assessed as favourable"),
+@@ -52,7 +52,7 @@ class SwotFactor:
+     category: SwotCategory
+     evidence: str
+     impact_score: int
+-    source: str                       # computed_financial | computed_market | analyst_input
++    source: str  # computed_financial | computed_market | analyst_input
+     metric: str | None = None
+     benchmark_basis: str | None = None
+ 
+@@ -87,7 +87,10 @@ class SwotResult:
+ # Scoring primitives
+ # --------------------------------------------------------------------------
+ 
+-def favourable_deviation_pct(value: float, benchmark: float, higher_is_better: bool) -> float | None:
++
++def favourable_deviation_pct(
++    value: float, benchmark: float, higher_is_better: bool
++) -> float | None:
+     """Signed deviation from benchmark, in percent, positive = good for the firm.
+ 
+     Returns ``None`` when the benchmark is zero — a relative comparison against
+@@ -127,7 +130,7 @@ def band_score(value: float, bands: tuple[float, ...]) -> int:
+ def _coerce_number(raw: Any) -> float | None:
+     if isinstance(raw, bool) or raw is None:
+         return None
+-    if isinstance(raw, (int, float)):
++    if isinstance(raw, int | float):
+         return float(raw)
+     return None
+ 
+@@ -136,6 +139,7 @@ def _coerce_number(raw: Any) -> float | None:
+ # Strengths / weaknesses from financial metrics
+ # --------------------------------------------------------------------------
+ 
++
+ def _score_financial_metrics(
+     *,
+     financial_data: dict,
+@@ -190,7 +194,9 @@ def _score_financial_metrics(
+ 
+         impact = impact_from_deviation(abs(deviation), settings)
+         category = SwotCategory.STRENGTH if deviation > 0 else SwotCategory.WEAKNESS
+-        basis_label = "peer-set median" if basis is BenchmarkBasis.PEER_SET else "industry benchmark"
++        basis_label = (
++            "peer-set median" if basis is BenchmarkBasis.PEER_SET else "industry benchmark"
++        )
+         direction = "above" if deviation > 0 else "below"
+ 
+         evidence = (
+@@ -222,6 +228,7 @@ def _score_financial_metrics(
+ # Opportunities / threats from market inputs
+ # --------------------------------------------------------------------------
+ 
++
+ def _score_market_inputs(
+     *,
+     market_data: dict,
+@@ -352,6 +359,7 @@ def _score_market_inputs(
+ # Analyst qualitative pass-through
+ # --------------------------------------------------------------------------
+ 
++
+ def _normalise_qualitative(raw_inputs: list) -> tuple[list[SwotFactor], list[dict[str, Any]]]:
+     factors: list[SwotFactor] = []
+     rejected: list[dict[str, Any]] = []
+@@ -394,6 +402,7 @@ def _normalise_qualitative(raw_inputs: list) -> tuple[list[SwotFactor], list[dic
+ # Entry point
+ # --------------------------------------------------------------------------
+ 
++
+ def run_swot_analysis(
+     *,
+     financial_data: dict,
+@@ -406,9 +415,7 @@ def run_swot_analysis(
+ ) -> SwotResult:
+     """Score a full SWOT grid. Deterministic: same inputs, same output, no LLM."""
+     benchmark_table, provenance = bench.load_industry_benchmarks(settings.industry_benchmarks_path)
+-    peer_financials = [
+-        c.get("financial_data") or {} for c in competitors if isinstance(c, dict)
+-    ]
++    peer_financials = [c.get("financial_data") or {} for c in competitors if isinstance(c, dict)]
+ 
+     financial_factors, financial_trace = _score_financial_metrics(
+         financial_data=financial_data,
+diff --git a/backend/app/services/timeline.py b/backend/app/services/timeline.py
+index 9f282a8..f1576d3 100644
+--- a/backend/app/services/timeline.py
++++ b/backend/app/services/timeline.py
+@@ -67,16 +67,12 @@ class TimelineResult:
+     calculation_basis: dict[str, Any] = field(default_factory=dict)
+ 
+ 
+-def classify_trend(
+-    first: float, last: float, settings: Settings
+-) -> tuple[TrendDirection, float]:
++def classify_trend(first: float, last: float, settings: Settings) -> tuple[TrendDirection, float]:
+     """Direction of travel between the first and last period, with the delta."""
+     delta = round(last - first, 4)
+     if abs(delta) < settings.trend_material_delta:
+         return TrendDirection.STABLE, delta
+-    return (
+-        TrendDirection.IMPROVING if delta > 0 else TrendDirection.DETERIORATING
+-    ), delta
++    return (TrendDirection.IMPROVING if delta > 0 else TrendDirection.DETERIORATING), delta
+ 
+ 
+ def build_timeline(
+@@ -146,14 +142,12 @@ def build_timeline(
+         }
+         return result
+ 
+-    a_trend, a_delta = classify_trend(
+-        usable[0].attractiveness, usable[-1].attractiveness, settings
+-    )
++    a_trend, a_delta = classify_trend(usable[0].attractiveness, usable[-1].attractiveness, settings)
+     s_trend, s_delta = classify_trend(usable[0].strength, usable[-1].strength, settings)
+     result.attractiveness_trend = a_trend
+     result.strength_trend = s_trend
+ 
+-    for previous, current in zip(usable, usable[1:]):
++    for previous, current in zip(usable, usable[1:], strict=False):
+         if previous.quadrant != current.quadrant:
+             result.quadrant_changes.append(
+                 {
+diff --git a/backend/app/services/validation.py b/backend/app/services/validation.py
+index 00c457f..b64f40a 100644
+--- a/backend/app/services/validation.py
++++ b/backend/app/services/validation.py
+@@ -103,7 +103,7 @@ def spearman(xs: list[float], ys: list[float]) -> float | None:
+         return None
+     rx, ry = _rank(xs), _rank(ys)
+     mx, my = mean(rx), mean(ry)
+-    num = sum((a - mx) * (b - my) for a, b in zip(rx, ry))
++    num = sum((a - mx) * (b - my) for a, b in zip(rx, ry, strict=False))
+     dx = sum((a - mx) ** 2 for a in rx)
+     dy = sum((b - my) ** 2 for b in ry)
+     if dx == 0 or dy == 0:
+@@ -120,9 +120,7 @@ def _separation(rows: list[PanelRow]) -> float | None:
+     return mean(grow) - mean(divest)
+ 
+ 
+-def run_validation(
+-    rows: list[PanelRow], settings: Settings
+-) -> ValidationResult:
++def run_validation(rows: list[PanelRow], settings: Settings) -> ValidationResult:
+     """Score a labelled panel. Deterministic given ``validation_random_seed``."""
+     if len(rows) < 3:
+         raise ValidationInputError(
+@@ -140,12 +138,8 @@ def run_validation(
+             "median_outcome": round(median(subset), 4) if subset else None,
+         }
+ 
+-    result.separation = (
+-        round(s, 4) if (s := _separation(rows)) is not None else None
+-    )
+-    result.spearman_rho = spearman(
+-        [r.position_score for r in rows], [r.outcome for r in rows]
+-    )
++    result.separation = round(s, 4) if (s := _separation(rows)) is not None else None
++    result.spearman_rho = spearman([r.position_score for r in rows], [r.outcome for r in rows])
+ 
+     # --- permutation null ---------------------------------------------------
+     if result.separation is not None:
+@@ -158,7 +152,7 @@ def run_validation(
+             rng.shuffle(shuffled)
+             permuted = [
+                 PanelRow(r.label, r.quadrant, r.attractiveness, r.strength, o)
+-                for r, o in zip(rows, shuffled)
++                for r, o in zip(rows, shuffled, strict=False)
+             ]
+             candidate = _separation(permuted)
+             if candidate is not None and abs(candidate) >= observed:
+@@ -172,9 +166,7 @@ def run_validation(
+ 
+     result.verdict = _verdict(result)
+     result.calculation_basis = {
+-        "separation_definition": (
+-            "mean(outcome | INVEST_GROW) - mean(outcome | HARVEST_DIVEST)"
+-        ),
++        "separation_definition": ("mean(outcome | INVEST_GROW) - mean(outcome | HARVEST_DIVEST)"),
+         "position_score_definition": (
+             "attractiveness x strength. Product not sum, because the GE-McKinsey "
+             "rule is conjunctive and a sum cannot distinguish 'strong on one axis, "
+@@ -232,9 +224,7 @@ def parse_panel(records: list[dict[str, Any]]) -> list[PanelRow]:
+         try:
+             quadrant = str(record["quadrant"]).strip().upper()
+             if quadrant not in QUADRANT_RANK:
+-                raise ValidationInputError(
+-                    f"row {index}: unknown quadrant '{quadrant}'"
+-                )
++                raise ValidationInputError(f"row {index}: unknown quadrant '{quadrant}'")
+             rows.append(
+                 PanelRow(
+                     label=str(record.get("label", f"row-{index}")),
+diff --git a/backend/ruff.toml b/backend/ruff.toml
+new file mode 100644
+index 0000000..e2b72b2
+--- /dev/null
++++ b/backend/ruff.toml
+@@ -0,0 +1,15 @@
++line-length = 100
++target-version = "py310"
++
++[lint]
++select = ["E", "F", "I", "UP", "B", "SIM", "C4"]
++ignore = [
++    "E501",   # line length is handled by the formatter
++    "B008",   # FastAPI's Depends() in defaults is the documented pattern
++]
++
++[lint.per-file-ignores]
++# Test fixtures import after setting environment variables, which has to happen
++# before app.config is imported anywhere.
++"tests/conftest.py" = ["E402"]
++"tests/*" = ["SIM117"]
+diff --git a/backend/tests/conftest.py b/backend/tests/conftest.py
+index c2b86af..2550546 100644
+--- a/backend/tests/conftest.py
++++ b/backend/tests/conftest.py
+@@ -46,12 +46,12 @@ def settings() -> Settings:
+ def strong_financials() -> dict:
+     """A company comfortably ahead of the default industry bands on every axis."""
+     return {
+-        "revenue_growth_pct": 22.0,      # vs 8.0 default -> +175%
+-        "gross_margin_pct": 62.0,        # vs 40.0        -> +55%
+-        "operating_margin_pct": 21.0,    # vs 12.0        -> +75%
+-        "net_margin_pct": 14.0,          # vs 8.0         -> +75%
+-        "market_share_pct": 28.0,        # vs 10.0        -> +180%
+-        "debt_to_equity": 0.4,           # vs 1.0, lower is better -> +60%
++        "revenue_growth_pct": 22.0,  # vs 8.0 default -> +175%
++        "gross_margin_pct": 62.0,  # vs 40.0        -> +55%
++        "operating_margin_pct": 21.0,  # vs 12.0        -> +75%
++        "net_margin_pct": 14.0,  # vs 8.0         -> +75%
++        "market_share_pct": 28.0,  # vs 10.0        -> +180%
++        "debt_to_equity": 0.4,  # vs 1.0, lower is better -> +60%
+     }
+ 
+ 
+diff --git a/backend/tests/test_attractiveness_matrix.py b/backend/tests/test_attractiveness_matrix.py
+index f860ca1..42d59f1 100644
+--- a/backend/tests/test_attractiveness_matrix.py
++++ b/backend/tests/test_attractiveness_matrix.py
+@@ -103,11 +103,11 @@ class TestQuadrantPlacement:
+         [
+             (4.5, 4.5, Quadrant.INVEST_GROW),
+             (3.51, 3.51, Quadrant.INVEST_GROW),
+-            (3.5, 3.5, Quadrant.SELECTIVE_INVEST),    # strictly greater than, not >=
++            (3.5, 3.5, Quadrant.SELECTIVE_INVEST),  # strictly greater than, not >=
+             (4.5, 2.0, Quadrant.SELECTIVE_INVEST),
+             (2.0, 4.5, Quadrant.SELECTIVE_INVEST),
+             (2.49, 2.49, Quadrant.HARVEST_DIVEST),
+-            (2.5, 2.5, Quadrant.SELECTIVE_INVEST),    # strictly less than, not <=
++            (2.5, 2.5, Quadrant.SELECTIVE_INVEST),  # strictly less than, not <=
+             (1.0, 1.0, Quadrant.HARVEST_DIVEST),
+         ],
+     )
+@@ -144,7 +144,7 @@ class TestAttractivenessScore:
+                 "industry_operating_margin_pct": 60.0,
+             },
+             swot=swot_with([5, 5]),
+-            competitive_intensity_score=1.0,   # inverted to 5
++            competitive_intensity_score=1.0,  # inverted to 5
+             settings=settings,
+         )
+         assert result.overall_attractiveness_score == pytest.approx(5.0)
+@@ -158,7 +158,7 @@ class TestAttractivenessScore:
+                 "industry_operating_margin_pct": 0.0,
+             },
+             swot=swot_with([1]),
+-            competitive_intensity_score=5.0,   # inverted to 1
++            competitive_intensity_score=5.0,  # inverted to 1
+             settings=settings,
+         )
+         assert result.overall_attractiveness_score == pytest.approx(1.0)
+diff --git a/backend/tests/test_porters_engine.py b/backend/tests/test_porters_engine.py
+index f63e4ba..3db3edd 100644
+--- a/backend/tests/test_porters_engine.py
++++ b/backend/tests/test_porters_engine.py
+@@ -29,7 +29,7 @@ def concentration_for(shares: list[float], settings: Settings, prices: list[floa
+         company_market_share_pct=shares[0] if shares else None,
+         competitors=[
+             {"competitor_name": f"C{i}", "market_share_pct": s, "price_point": p}
+-            for i, (s, p) in enumerate(zip(shares[1:], prices[1:]))
++            for i, (s, p) in enumerate(zip(shares[1:], prices[1:], strict=False))
+         ],
+         analyst_intensity_override=None,
+         settings=settings,
+@@ -70,9 +70,7 @@ class TestAnalystOnlyForces:
+         assert score_substitutes({}).score is None
+ 
+     def test_buyer_power_from_input_is_tagged_analyst(self):
+-        force = score_buyer_power(
+-            {"buyer_concentration": 4, "buyer_switching_cost": 5}
+-        )
++        force = score_buyer_power({"buyer_concentration": 4, "buyer_switching_cost": 5})
+         assert force.score == pytest.approx(4.5)
+         assert force.source is ForceSource.ANALYST_INPUT
+         assert "judgement, not a measurement" in force.evidence
+@@ -191,12 +189,12 @@ class TestFullAnalysis:
+         assert classify_attractiveness(composite, settings) is expected
+ 
+     def test_deterministic(self, settings: Settings):
+-        args = dict(
+-            financial_data={"gross_margin_pct": 45.0},
+-            market_data={"industry_operating_margin_pct": 12.0, "buyer_concentration": 3},
+-            concentration=concentration_for([25, 25, 25, 25], settings),
+-            settings=settings,
+-        )
++        args = {
++            "financial_data": {"gross_margin_pct": 45.0},
++            "market_data": {"industry_operating_margin_pct": 12.0, "buyer_concentration": 3},
++            "concentration": concentration_for([25, 25, 25, 25], settings),
++            "settings": settings,
++        }
+         first = run_porters_analysis(**args)
+         second = run_porters_analysis(**args)
+         assert [f.to_dict() for f in first.forces] == [f.to_dict() for f in second.forces]
+diff --git a/backend/tests/test_scenario_engine.py b/backend/tests/test_scenario_engine.py
+index 13c6059..2441121 100644
+--- a/backend/tests/test_scenario_engine.py
++++ b/backend/tests/test_scenario_engine.py
+@@ -118,9 +118,9 @@ class TestNonMutation:
+             },
+         )
+ 
+-        assert BASE_FINANCIAL == financial_before
+-        assert BASE_MARKET == market_before
+-        assert BASE_COMPETITORS == competitors_before
++        assert financial_before == BASE_FINANCIAL
++        assert market_before == BASE_MARKET
++        assert competitors_before == BASE_COMPETITORS
+ 
+ 
+ class TestEffects:
+@@ -147,9 +147,7 @@ class TestEffects:
+         assert "competitive_intensity_score" in result.delta
+ 
+     def test_removing_a_competitor_that_does_not_exist_warns(self, settings: Settings):
+-        result = run(
+-            settings, {"competitors": [{"op": "remove", "competitor_name": "Ghost"}]}
+-        )
++        result = run(settings, {"competitors": [{"op": "remove", "competitor_name": "Ghost"}]})
+         assert any("not found in the baseline" in w for w in result.warnings)
+ 
+     def test_update_changes_only_the_named_competitor(self, settings: Settings):
+diff --git a/backend/tests/test_sensitivity.py b/backend/tests/test_sensitivity.py
+index 4677593..47ea311 100644
+--- a/backend/tests/test_sensitivity.py
++++ b/backend/tests/test_sensitivity.py
+@@ -57,9 +57,9 @@ class TestDerivatives:
+     def test_intensity_derivative_is_negative(self, settings: Settings):
+         result, _ = analyse(settings)
+         intensity = next(a for a in result.axes if a.axis == "competitive_intensity")
+-        assert intensity.derivative == pytest.approx(-0.2), (
+-            "intensity enters as (6 - i), so raising it must LOWER attractiveness"
+-        )
++        assert intensity.derivative == pytest.approx(
++            -0.2
++        ), "intensity enters as (6 - i), so raising it must LOWER attractiveness"
+ 
+ 
+ class TestExactness:
+@@ -81,9 +81,9 @@ class TestExactness:
+             short = axis.required_delta * 0.98
+             moved = attractiveness + axis.derivative * short
+             quadrant, _, _ = place_quadrant(moved, result.baseline_strength, settings)
+-            assert quadrant is result.baseline_quadrant, (
+-                f"{axis.axis}: 98% of the reported delta should not be enough"
+-            )
++            assert (
++                quadrant is result.baseline_quadrant
++            ), f"{axis.axis}: 98% of the reported delta should not be enough"
+ 
+     def test_hand_computed_flip_distance(self, settings: Settings):
+         # growth 4, size 4, profit 4, intensity 2 -> A = 1.2+0.8+1.2+0.8 = 4.0
+@@ -97,9 +97,7 @@ class TestExactness:
+ 
+ 
+ class TestBounds:
+-    def test_a_flip_needing_more_than_the_axis_allows_is_unreachable(
+-        self, settings: Settings
+-    ):
++    def test_a_flip_needing_more_than_the_axis_allows_is_unreachable(self, settings: Settings):
+         # Size carries only 0.2 weight; from 4.0 it can shed at most 0.6 of
+         # attractiveness, which cannot get from 4.0 down to 3.5... actually it
+         # can (0.5 needed). Use a deeply-INVEST_GROW position instead.
+@@ -124,9 +122,7 @@ class TestBounds:
+ 
+ 
+ class TestConjunctiveRule:
+-    def test_crossing_a_threshold_alone_may_not_change_the_quadrant(
+-        self, settings: Settings
+-    ):
++    def test_crossing_a_threshold_alone_may_not_change_the_quadrant(self, settings: Settings):
+         """INVEST_GROW needs BOTH axes high, so raising attractiveness alone
+         cannot enter it while strength sits below the threshold."""
+         result, _ = analyse(
+@@ -218,13 +214,10 @@ class TestBindingConstraint:
+         assert result.verdict is SensitivityVerdict.ROBUST
+         assert result.binding_constraint is not None
+         assert (
+-            abs(result.binding_constraint.required_delta)
+-            > settings.sensitivity_fragile_threshold
++            abs(result.binding_constraint.required_delta) > settings.sensitivity_fragile_threshold
+         )
+ 
+-    def test_binding_constraint_is_none_only_when_nothing_is_reachable(
+-        self, settings: Settings
+-    ):
++    def test_binding_constraint_is_none_only_when_nothing_is_reachable(self, settings: Settings):
+         # Weights zeroed everywhere but growth would leave the other axes inert;
+         # instead check the documented contract directly.
+         result, _ = analyse(settings, strength=4.0)
+diff --git a/backend/tests/test_swot_engine.py b/backend/tests/test_swot_engine.py
+index cf2d46f..cfe31dc 100644
+--- a/backend/tests/test_swot_engine.py
++++ b/backend/tests/test_swot_engine.py
+@@ -47,9 +47,9 @@ class TestImpactBuckets:
+     @pytest.mark.parametrize(
+         ("deviation", "expected"),
+         [
+-            (5.0, 1),      # just past the neutral band
++            (5.0, 1),  # just past the neutral band
+             (9.99, 1),
+-            (10.0, 2),     # exactly on an edge lands in the higher bucket
++            (10.0, 2),  # exactly on an edge lands in the higher bucket
+             (24.99, 2),
+             (25.0, 3),
+             (49.99, 3),
+@@ -220,9 +220,9 @@ class TestFullAnalysis:
+         scores = [f.impact_score for f in result.strengths]
+         assert scores == sorted(scores, reverse=True)
+ 
+-    def test_analysis_is_deterministic(self, strong_financials, growth_market, competitors, settings):
++    def test_analysis_is_deterministic(
++        self, strong_financials, growth_market, competitors, settings
++    ):
+         first = self._run(strong_financials, growth_market, competitors, settings)
+         second = self._run(strong_financials, growth_market, competitors, settings)
+-        assert [f.to_dict() for f in first.all_factors] == [
+-            f.to_dict() for f in second.all_factors
+-        ]
++        assert [f.to_dict() for f in first.all_factors] == [f.to_dict() for f in second.all_factors]
+diff --git a/backend/tests/test_timeline_and_validation.py b/backend/tests/test_timeline_and_validation.py
+index 7172ce9..e1937a8 100644
+--- a/backend/tests/test_timeline_and_validation.py
++++ b/backend/tests/test_timeline_and_validation.py
+@@ -57,9 +57,10 @@ class TestTimeline:
+             period("Q3-2025", date(2025, 3, 31), 2.0, 2.0, "HARVEST_DIVEST"),
+         ]
+         result = build_timeline(entity_key="acme", rows=rows, settings=settings)
+-        assert [p.period_label for p in result.points] == ["Q3-2025", "Q11-2025"], (
+-            "string ordering would put Q11 before Q3"
+-        )
++        assert [p.period_label for p in result.points] == [
++            "Q3-2025",
++            "Q11-2025",
++        ], "string ordering would put Q11 before Q3"
+ 
+     def test_period_without_a_date_is_excluded_with_a_reason(self, settings: Settings):
+         rows = [
+@@ -142,18 +143,14 @@ class TestSpearman:
+ class TestValidation:
+     def test_tiny_panel_is_rejected(self, settings: Settings):
+         with pytest.raises(ValidationInputError, match="at least 3"):
+-            run_validation(
+-                [PanelRow("a", "INVEST_GROW", 4, 4, 0.1)], settings
+-            )
++            run_validation([PanelRow("a", "INVEST_GROW", 4, 4, 0.1)], settings)
+ 
+     def test_position_score_is_the_product(self):
+         assert PanelRow("a", "INVEST_GROW", 4.0, 3.0, 0.1).position_score == 12.0
+ 
+     def test_clear_signal_is_detected(self, settings: Settings):
+         rows = [PanelRow(f"g{i}", "INVEST_GROW", 4.5, 4.5, 0.30 + i * 0.01) for i in range(8)]
+-        rows += [
+-            PanelRow(f"d{i}", "HARVEST_DIVEST", 1.5, 1.5, -0.20 + i * 0.01) for i in range(8)
+-        ]
++        rows += [PanelRow(f"d{i}", "HARVEST_DIVEST", 1.5, 1.5, -0.20 + i * 0.01) for i in range(8)]
+         result = run_validation(rows, settings)
+         assert result.separation > 0
+         assert result.permutation_p_value <= 0.05
+@@ -180,9 +177,7 @@ class TestValidation:
+         rows = [PanelRow(f"g{i}", "INVEST_GROW", 5, 5, 10.0) for i in range(6)]
+         rows += [PanelRow(f"d{i}", "HARVEST_DIVEST", 1, 1, -10.0) for i in range(6)]
+         result = run_validation(rows, settings)
+-        assert result.permutation_p_value > 0, (
+-            "a finite permutation test cannot establish p = 0"
+-        )
++        assert result.permutation_p_value > 0, "a finite permutation test cannot establish p = 0"
+ 
+     def test_no_verdict_without_both_extreme_quadrants(self, settings: Settings):
+         rows = [PanelRow(f"s{i}", "SELECTIVE_INVEST", 3, 3, 0.1 * i) for i in range(5)]

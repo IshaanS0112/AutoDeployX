@@ -1,0 +1,90 @@
+name: CI
+
+# Lints the PIPELINE itself. A CI/CD project whose own workflows and scripts
+# are unlinted is not making a credible claim about engineering discipline.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Lint workflows, scripts and Dockerfiles
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: actionlint
+        # Catches invalid workflow syntax, bad `needs` references, undefined
+        # matrix keys, and shell errors inside `run:` blocks.
+        uses: raven-actions/actionlint@v2
+        with:
+          fail-on-error: true
+
+      - name: shellcheck
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
+          shellcheck -x scripts/*.sh
+
+      - name: hadolint (Dockerfile.api)
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: docker/Dockerfile.api
+          failure-threshold: warning
+
+      - name: hadolint (Dockerfile.frontend)
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: docker/Dockerfile.frontend
+          failure-threshold: warning
+
+      - name: services.json is valid and complete
+        # The validator lives in scripts/ rather than inline here, so it can be
+        # run locally and, more importantly, tested. See --self-test below.
+        env:
+          # The ceiling autoscaling can reach, so the budget is checked against
+          # the task count the service can actually run, not the one it starts at.
+          AUTOSCALING_MAX: "2"
+        run: ./scripts/validate-manifest.sh
+
+      - name: ...and the validator actually rejects bad input
+        # Trap 25. A validator nobody has run against a deliberately broken
+        # manifest passes CI forever and catches nothing. This feeds it twelve
+        # broken variants and asserts it rejects every one.
+        run: ./scripts/validate-manifest.sh --self-test
+
+  policy:
+    name: Policy as code
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.8"
+          terraform_wrapper: false
+
+      - name: Install conftest
+        run: |
+          set -euo pipefail
+          version=0.56.0
+          curl -sSfL "https://github.com/open-policy-agent/conftest/releases/download/v${version}/conftest_${version}_Linux_x86_64.tar.gz" \
+            | tar -xz -C /usr/local/bin conftest
+          conftest --version
+
+      - name: Install checkov
+        run: pipx install checkov
+
+      - name: Policy rules reject what they are supposed to reject
+        # Same discipline as the manifest validator: a policy that has never
+        # failed is a policy nobody has verified. Each rule has a fixture it
+        # must reject, and this runs them before the real check.
+        run: ./scripts/policy-check.sh --self-test
+
+      - name: checkov + AutoDeployX's own rules
+        run: ./scripts/policy-check.sh

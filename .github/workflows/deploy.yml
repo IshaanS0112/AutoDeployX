@@ -1,0 +1,483 @@
+name: Deploy
+
+# git push -> lint -> test -> build -> scan -> push -> deploy -> verify.
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "docs/**"
+      - "**.md"
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      service:
+        description: "Which service to deploy"
+        required: true
+        type: choice
+        # GitHub rejects an empty string as a choice option, so "all" is the
+        # explicit sentinel rather than a blank default.
+        options: [all, finsight, strategysphere]
+        default: all
+
+permissions:
+  id-token: write   # REQUIRED for OIDC — both for AWS and for cosign keyless
+                    # signing, which exchanges the same token with Fulcio.
+  contents: read
+
+concurrency:
+  # One deploy at a time per branch. Two concurrent `aws ecs update-service` calls
+  # against the same service race, and the loser's task definition wins arbitrarily.
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ap-south-1
+  TRIVY_SEVERITY: HIGH,CRITICAL
+
+jobs:
+  # Read services/services.json once and hand the matrix to every later job.
+  # The manifest is the single source of truth shared with Terraform.
+  plan:
+    name: Resolve service matrix
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.build.outputs.matrix }}
+      short_sha: ${{ steps.build.outputs.short_sha }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: build
+        name: Build matrix from services/services.json
+        run: |
+          set -euo pipefail
+          filter='${{ github.event.inputs.service }}'
+          if [ -n "$filter" ] && [ "$filter" != "all" ]; then
+            matrix=$(jq -c --arg k "$filter" '{include: [.services[] | select(.key==$k)]}' services/services.json)
+          else
+            matrix=$(jq -c '{include: .services}' services/services.json)
+          fi
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+          echo "short_sha=$(git rev-parse --short=8 HEAD)" >> "$GITHUB_OUTPUT"
+          echo "Services to process:"
+          echo "$matrix" | jq -r '.include[].key'
+
+  # Lint and test the SERVICE's own code, in the service's own repo.
+  # This runs on pull requests too — the gate exists to stop a broken commit
+  # reaching the build stage, so it must not be conditional on branch.
+  test:
+    name: Test ${{ matrix.key }}
+    needs: plan
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    steps:
+      - name: Checkout ${{ matrix.repo }}
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ matrix.repo }}
+          ref: ${{ matrix.ref }}
+          path: service
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: service/backend/requirements-dev.txt
+
+      - name: Install backend dependencies
+        working-directory: service/backend
+        run: pip install -r requirements-dev.txt
+
+      - name: Lint (ruff)
+        # Manifest-driven, not unconditional. AutoDeployX deploys repos it does not
+        # own; imposing a lint standard they were never written against would make
+        # every deploy red on day one, and a.
+        if: ${{ matrix.checks.lint }}
+        working-directory: service/backend
+        run: |
+          pip install ruff==0.8.4
+          ruff check app tests
+          ruff format --check app tests
+
+      - name: Lint gate not enabled for ${{ matrix.key }}
+        if: ${{ !matrix.checks.lint }}
+        run: |
+          echo "::warning title=Lint gate off::${{ matrix.repo }} has no ruff config and its own CI does not lint."
+          echo "Apply patches/strategysphere-lint-parity.patch, then set checks.lint=true in services/services.json."
+
+      - name: Test (pytest)
+        working-directory: service/backend
+        # The models declare JSONB/UUID as dialect variants, so the API tests
+        # run the real app against SQLite with no database service needed.
+        run: pytest -q
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: service/frontend/package-lock.json
+
+      - name: Frontend type-check
+        working-directory: service/frontend
+        run: |
+          npm ci --no-audit --no-fund
+          npm run typecheck
+
+  # Build, scan, push. Only on main — a PR gets the test gate above and
+  # nothing else, because a PR from a fork must never be able to push an
+  # image into the production registry.
+  build:
+    name: Build ${{ matrix.key }}
+    needs: [plan, test]
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    outputs:
+      image_tag: ${{ needs.plan.outputs.short_sha }}
+    steps:
+      - name: Checkout pipeline
+        uses: actions/checkout@v4
+        with:
+          path: pipeline
+
+      - name: Checkout ${{ matrix.repo }}
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ matrix.repo }}
+          ref: ${{ matrix.ref }}
+          path: service
+
+      - name: Stage build context
+        run: |
+          set -euo pipefail
+          # The Dockerfiles and the .dockerignore live in THIS repo; the source
+          # lives in the service repo.
+          cp pipeline/docker/dockerignore.service service/.dockerignore
+          # The nginx config is staged the same way and for the same reason:
+          # the build context is the SERVICE repo, so anything this repo owns
+          # has to be copied in before the build can reference it.
+          cp pipeline/docker/nginx.ecs.conf service/nginx.ecs.conf
+          echo "--- build context excludes ---"
+          cat service/.dockerignore
+
+      - name: Set up QEMU for cross-architecture builds
+        # The runner is x86_64 and the tasks run on Graviton. Without this,
+        # buildx cannot emulate arm64 and the build fails at the first RUN.
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          # No AWS_ACCESS_KEY_ID anywhere. This exchanges the workflow's OIDC token
+          # for STS credentials that expire in an hour and are scoped by the role's
+          # policy to this project's ECR repos and ECS.
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: gha-build-${{ matrix.key }}-${{ github.run_id }}
+
+      - id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build API image
+        uses: docker/build-push-action@v6
+        with:
+          context: service
+          file: pipeline/docker/Dockerfile.api
+          # Loaded into the local daemon first, not pushed. Trivy scans it
+          # here; if it fails, nothing ever reaches the registry. Scanning
+          # after the push means the vulnerable image is already pullable.
+          platforms: linux/arm64
+          load: true
+          push: false
+          tags: local/${{ matrix.key }}-api:${{ needs.plan.outputs.short_sha }}
+          build-args: |
+            GIT_SHA=${{ needs.plan.outputs.short_sha }}
+            BUILD_TIME=${{ github.event.repository.updated_at }}
+            SERVICE_NAME=${{ matrix.key }}
+          # BuildKit layer cache in the GitHub Actions cache backend.
+          cache-from: type=gha,scope=${{ matrix.key }}-api
+          cache-to: type=gha,scope=${{ matrix.key }}-api,mode=max
+          provenance: false
+
+      - name: Build web image
+        uses: docker/build-push-action@v6
+        with:
+          context: service
+          file: pipeline/docker/Dockerfile.frontend
+          platforms: linux/arm64
+          load: true
+          push: false
+          tags: local/${{ matrix.key }}-web:${{ needs.plan.outputs.short_sha }}
+          build-args: |
+            GIT_SHA=${{ needs.plan.outputs.short_sha }}
+          cache-from: type=gha,scope=${{ matrix.key }}-web
+          cache-to: type=gha,scope=${{ matrix.key }}-web,mode=max
+          provenance: false
+
+      - name: Record image sizes
+        run: |
+          set -euo pipefail
+          {
+            echo "### ${{ matrix.key }} image sizes"
+            echo ""
+            echo "| image | size |"
+            echo "|---|---|"
+            docker image inspect local/${{ matrix.key }}-api:${{ needs.plan.outputs.short_sha }} \
+              --format '| api | {{ printf "%.0f" (divf .Size 1048576) }} MB |'
+            docker image inspect local/${{ matrix.key }}-web:${{ needs.plan.outputs.short_sha }} \
+              --format '| web | {{ printf "%.0f" (divf .Size 1048576) }} MB |'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Scan API image (Trivy)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: local/${{ matrix.key }}-api:${{ needs.plan.outputs.short_sha }}
+          format: table
+          # THE GATE. A HIGH or CRITICAL CVE with a fix available fails the
+          # build and no image is pushed.
+          exit-code: "1"
+          severity: ${{ env.TRIVY_SEVERITY }}
+          # Unfixed CVEs are reported but do not fail the build: there is no action
+          # available to take on them, and failing on them means the pipeline is red
+          # for reasons nobody can resolve, which trains.
+          ignore-unfixed: true
+          vuln-type: os,library
+
+      - name: Scan web image (Trivy)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: local/${{ matrix.key }}-web:${{ needs.plan.outputs.short_sha }}
+          format: table
+          exit-code: "1"
+          severity: ${{ env.TRIVY_SEVERITY }}
+          ignore-unfixed: true
+          vuln-type: os,library
+
+      - name: Generate an SBOM for each image
+        # An SBOM is the answer to "you have a CVE announcement and 40 images —
+        # which of them contain the package?".
+        uses: anchore/sbom-action@v0
+        with:
+          image: local/${{ matrix.key }}-api:${{ needs.plan.outputs.short_sha }}
+          format: spdx-json
+          artifact-name: sbom-${{ matrix.key }}-api-${{ needs.plan.outputs.short_sha }}.spdx.json
+          output-file: sbom-api.spdx.json
+
+      - uses: anchore/sbom-action@v0
+        with:
+          image: local/${{ matrix.key }}-web:${{ needs.plan.outputs.short_sha }}
+          format: spdx-json
+          artifact-name: sbom-${{ matrix.key }}-web-${{ needs.plan.outputs.short_sha }}.spdx.json
+          output-file: sbom-web.spdx.json
+
+      - name: Tag and push to ECR
+        id: push
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+          TAG: ${{ needs.plan.outputs.short_sha }}
+        run: |
+          set -euo pipefail
+          for c in api web; do
+            src="local/${{ matrix.key }}-${c}:${TAG}"
+            dst="${REGISTRY}/autodeployx/${{ matrix.key }}-${c}:${TAG}"
+            # Tagged with the git SHA, never :latest. You must be able to say
+            # exactly which commit is serving production, and roll back to a
+            # specific known-good one. `:latest` makes both impossible.
+            docker tag "$src" "$dst"
+            docker push "$dst"
+            # The DIGEST, not the tag. A signature is over an immutable content
+            # address; signing a tag signs a pointer that could later move.
+            digest="$(docker inspect --format='{{index .RepoDigests 0}}' "$dst" | cut -d@ -f2)"
+            echo "${c}_digest=${digest}" >> "$GITHUB_OUTPUT"
+            echo "pushed $dst@$digest"
+          done
+
+      - uses: sigstore/cosign-installer@v3
+
+      - name: Sign both images (keyless)
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+          TAG: ${{ needs.plan.outputs.short_sha }}
+          COSIGN_YES: "true"
+        run: |
+          set -euo pipefail
+          # Keyless. There is no signing key to store, rotate or leak: cosign
+          # exchanges this workflow's OIDC token for a short-lived certificate from
+          # Fulcio, signs with it, and records the signature in.
+          for c in api web; do
+            ref="${REGISTRY}/autodeployx/${{ matrix.key }}-${c}:${TAG}"
+            digest="$(docker inspect --format='{{index .RepoDigests 0}}' "$ref" | cut -d@ -f2)"
+            cosign sign "${REGISTRY}/autodeployx/${{ matrix.key }}-${c}@${digest}"
+            cosign attest --predicate "sbom-${c}.spdx.json" --type spdxjson \
+              "${REGISTRY}/autodeployx/${{ matrix.key }}-${c}@${digest}"
+            echo "signed and attested ${c}"
+          done
+
+      - name: Record what was published
+        run: |
+          {
+            echo "### ${{ matrix.key }} supply chain"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| api digest | \`${{ steps.push.outputs.api_digest }}\` |"
+            echo "| web digest | \`${{ steps.push.outputs.web_digest }}\` |"
+            echo "| signed | keyless, via Fulcio + Rekor |"
+            echo "| SBOM | SPDX, attached as an attestation and as a build artifact |"
+            echo ""
+            echo "Verify from anywhere:"
+            echo ""
+            echo '```bash'
+            echo "cosign verify \\"
+            echo "  --certificate-identity-regexp '^https://github.com/${{ github.repository }}/' \\"
+            echo "  --certificate-oidc-issuer https://token.actions.githubusercontent.com \\"
+            echo "  <registry>/autodeployx/${{ matrix.key }}-api@${{ steps.push.outputs.api_digest }}"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # Schema migrations. Between build and deploy, deliberately.
+  migrate:
+    name: Migrate ${{ matrix.key }}
+    needs: [plan, build]
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+    strategy:
+      fail-fast: true      # a failed migration must not race a second service
+      max-parallel: 1      # both services share one RDS instance
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: gha-migrate-${{ matrix.key }}-${{ github.run_id }}
+
+      - id: migrate
+        name: Run migrations for ${{ matrix.key }} @ ${{ needs.plan.outputs.short_sha }}
+        env:
+          SERVICE_KEY: ${{ matrix.key }}
+          IMAGE_TAG: ${{ needs.plan.outputs.short_sha }}
+          CLUSTER: ${{ vars.ECS_CLUSTER }}
+          AWS_REGION: ${{ env.AWS_REGION }}
+        run: ./scripts/migrate.sh
+
+      - name: Report
+        if: always()
+        run: |
+          {
+            echo "### ${{ matrix.key }} migrations"
+            echo ""
+            echo "- result: \`${{ steps.migrate.outputs.result }}\`"
+            echo "- image:  \`${{ needs.plan.outputs.short_sha }}\`"
+            if [ "${{ steps.migrate.outputs.result }}" = "skipped" ]; then
+              echo ""
+              echo "> This service still relies on \`create_all()\` at startup."
+              echo "> \`create_all\` only ADDS tables — it will not alter a column,"
+              echo "> so the first non-additive schema change deploys silently and"
+              echo "> fails at runtime. See \`docs/adr/0016\`."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # Deploy. Gated on the `production` GitHub environment, which is also what
+  # the IAM trust policy names — so protection rules configured there are a
+  # real control, not just a UI badge.
+  deploy:
+    name: Deploy ${{ matrix.key }}
+    needs: [plan, build, migrate]
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: ${{ steps.deploy.outputs.service_url }}
+    strategy:
+      fail-fast: false
+      max-parallel: 1   # two services, one shared RDS — deploy them in order
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: gha-deploy-${{ matrix.key }}-${{ github.run_id }}
+
+      - uses: aws-actions/amazon-ecr-login@v2
+        id: ecr
+
+      - uses: sigstore/cosign-installer@v3
+
+      - name: Verify both images were signed by THIS pipeline
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+          TAG: ${{ needs.plan.outputs.short_sha }}
+        run: |
+          set -euo pipefail
+          # Signing an artifact nobody verifies is theatre.
+          for c in api web; do
+            cosign verify \
+              --certificate-identity-regexp "^https://github.com/${GITHUB_REPOSITORY}/" \
+              --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+              "${REGISTRY}/autodeployx/${{ matrix.key }}-${c}:${TAG}" > /dev/null
+            echo "verified ${c}"
+          done
+
+      - id: deploy
+        name: Roll out ${{ matrix.key }} @ ${{ needs.plan.outputs.short_sha }}
+        env:
+          SERVICE_KEY: ${{ matrix.key }}
+          IMAGE_TAG: ${{ needs.plan.outputs.short_sha }}
+          CLUSTER: ${{ vars.ECS_CLUSTER }}
+          AWS_REGION: ${{ env.AWS_REGION }}
+        run: ./scripts/deploy.sh
+
+      - name: Smoke test the live URL
+        env:
+          SERVICE_URL: ${{ steps.deploy.outputs.service_url }}
+          EXPECTED_SHA: ${{ needs.plan.outputs.short_sha }}
+          HEALTH_PATH: ${{ matrix.health_path }}
+        run: ./scripts/smoke-test.sh
+
+      - name: Report
+        if: always()
+        run: |
+          {
+            echo "### ${{ matrix.key }}"
+            echo ""
+            echo "- commit: \`${{ needs.plan.outputs.short_sha }}\`"
+            echo "- url: ${{ steps.deploy.outputs.service_url }}"
+            echo "- result: ${{ job.status }}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: On failure, surface what ECS decided
+        if: failure()
+        env:
+          SERVICE_KEY: ${{ matrix.key }}
+          CLUSTER: ${{ vars.ECS_CLUSTER }}
+        run: |
+          set +e
+          svc="${CLUSTER}-${SERVICE_KEY}"
+          echo "::group::Service events (most recent first)"
+          aws ecs describe-services --cluster "$CLUSTER" --services "$svc" \
+            --query 'services[0].events[0:15].[createdAt,message]' --output table
+          echo "::endgroup::"
+          echo "::group::Deployment state"
+          aws ecs describe-services --cluster "$CLUSTER" --services "$svc" \
+            --query 'services[0].deployments[].[status,rolloutState,rolloutStateReason,taskDefinition,runningCount,desiredCount,failedTasks]' \
+            --output table
+          echo "::endgroup::"
+          echo "If rolloutState is ROLLBACK_SUCCESSFUL, the circuit breaker did its job:"
+          echo "the previous task definition is serving traffic and the site is up."
+          echo "See docs/runbook.md."

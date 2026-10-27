@@ -1,0 +1,74 @@
+# Copy to terraform/envs/production.tfvars and fill in. Real tfvars are
+# gitignored; only the .example files are committed.
+#
+# The Anthropic key is NOT here. Pass it as an environment variable so it never
+# touches a file that could be committed:
+#   export TF_VAR_anthropic_api_key="sk-ant-..."
+
+environment = "production"
+project     = "autodeployx"
+aws_region  = "ap-south-1"
+
+# Your public IP, for the one-time database bootstrap. Get it with:
+#   curl -s ifconfig.me
+# Do not leave this as 0.0.0.0/0.
+operator_cidr = "203.0.113.42/32"
+
+budget_notification_email = "you@example.com"
+# alert_email = "you@example.com"   # defaults to the budget address
+
+github_owner = "IshaanS0112"
+github_repo  = "AutoDeployX"
+github_allowed_refs = [
+  "repo:IshaanS0112/AutoDeployX:ref:refs/heads/main",
+  "repo:IshaanS0112/AutoDeployX:environment:production",
+]
+
+# --- TLS (optional) --------------------------------------------------------
+# Set both and the stack switches to HTTPS on :443 with host-based routing at
+# <service>.<domain>, and :80 redirecting. Leave both empty for plain HTTP on
+# per-service ports (:80 and :8080).
+# domain_name     = "example.com"
+# route53_zone_id = "Z0123456789ABCDEFGHIJ"
+
+# --- Cost levers. See docs/cost-breakdown.md before changing any of these. ---
+use_fargate_spot          = true  # ~70% off Fargate compute
+enable_container_insights = false # NOT free-tier; can exceed the compute bill
+log_retention_days        = 7
+rds_instance_class        = "db.t3.micro" # free tier, 12 months
+rds_backup_retention_days = 1
+rds_deletion_protection   = false # so teardown.sh works unattended
+budget_thresholds_usd     = [5, 10, 20]
+
+# --- SLO -------------------------------------------------------------------
+availability_slo              = 0.99
+enable_slo_alarms             = true
+enable_cost_anomaly_detection = true
+
+# ---------------------------------------------------------------------------
+# THE EXPENSIVE SWITCHES — all off, and the default apply is the ~$0.033/hour
+# stack docs/cost-breakdown.md describes.
+#
+# Run `make cost ENV=<env>` before flipping any of these. It prices whatever
+# combination you have set and tells you the multiple against the default.
+# ---------------------------------------------------------------------------
+
+# Production-correct networking. enable_private_subnets on its own costs
+# nothing and breaks the deployment — tasks in a private subnet with no route
+# to ECR never start. Pair it with ONE of the two below.
+# enable_private_subnets = true
+# enable_nat_gateway     = true    # ~$32/mo each; single_nat_gateway halves it
+# single_nat_gateway     = true
+# enable_vpc_endpoints   = true    # ~$7.20/mo per endpoint per AZ (~$72 for 5 x 2)
+
+# enable_flow_logs        = true   # ~$0.50/GB ingested
+# enable_waf              = true   # ~$8/mo all in
+# enable_alb_access_logs  = true   # ~$0.50/mo
+# enable_container_insights = true # ~$3-8/mo, NOT free-tier eligible
+
+# rds_multi_az                     = true  # ~2x the RDS line
+# rds_performance_insights         = true  # ~$2-5/mo beyond 7-day retention
+# rds_enhanced_monitoring_interval = 60    # ~$2-5/mo, billed per instance per minute
+
+# Pin the AZs when you want the same tfvars to rebuild the same stack.
+# availability_zones = ["ap-south-1a", "ap-south-1b"]

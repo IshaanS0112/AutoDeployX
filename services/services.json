@@ -1,0 +1,83 @@
+{
+  "_comment": [
+    "Single source of truth for what AutoDeployX deploys.",
+    "Consumed by BOTH the GitHub Actions matrix (jq -> fromJSON) and Terraform",
+    "(jsondecode(file(...))). Adding a third service means adding an object",
+    "here and nothing else: no workflow edit, no new Terraform resource block.",
+    "That is the test of whether a pipeline is a pipeline or just a script that",
+    "happens to run twice."
+  ],
+  "services": [
+    {
+      "key": "finsight",
+      "display_name": "FinSight 360",
+      "repo": "IshaanS0112/FinSight-360",
+      "ref": "main",
+      "description": "Corporate financial health and risk intelligence",
+      "_checks_note": "This repo ships backend/ruff.toml and its own CI runs ruff. The pipeline enforces the same gate.",
+      "checks": { "lint": true, "test": true },
+      "alb_listener_port": 80,
+      "health_path": "/api/health",
+      "db_name": "finsight360",
+      "db_user": "finsight_app",
+      "task_cpu": 512,
+      "task_memory": 1024,
+      "desired_count": 1,
+      "containers": {
+        "web": { "port": 80, "dockerfile": "docker/Dockerfile.frontend" },
+        "api": { "port": 8000, "dockerfile": "docker/Dockerfile.api" }
+      },
+      "_migrations_note": "enabled=false because this repo still calls Base.metadata.create_all() on startup. create_all only ever ADDS tables — it will not alter a column, so the first schema change that is not a brand-new table deploys silently and then fails at runtime. The pipeline records that as a known gap rather than pretending the stage ran. See docs/adr/0016.",
+      "migrations": {
+        "enabled": false,
+        "command": ["alembic", "upgrade", "head"],
+        "timeout_seconds": 300
+      },
+      "db": {
+        "pool_size": 5,
+        "max_overflow": 2,
+        "pool_recycle_seconds": 1800,
+        "pool_timeout_seconds": 10
+      },
+      "env": {
+        "REFERENCE_BENCHMARKS_PATH": ""
+      }
+    },
+    {
+      "key": "strategysphere",
+      "display_name": "StrategySphere AI",
+      "repo": "IshaanS0112/StrategySphere-AI",
+      "ref": "main",
+      "description": "Executive decision intelligence platform",
+      "_checks_note": "lint is false because this repo has no ruff.toml on origin/main and its own CI does not run ruff, so its tree does not currently satisfy one. Turning this on without fixing that would make every deploy red on day one. The fix is written and verified: apply patches/strategysphere-lint-parity.patch (226 tests pass, ruff clean), push it, then flip this to true. This field records what is TRUE of the repo today, not what is intended.",
+      "checks": { "lint": false, "test": true },
+      "alb_listener_port": 8080,
+      "health_path": "/api/health",
+      "db_name": "strategysphere",
+      "db_user": "strategy_app",
+      "task_cpu": 512,
+      "task_memory": 1024,
+      "desired_count": 1,
+      "containers": {
+        "web": { "port": 80, "dockerfile": "docker/Dockerfile.frontend" },
+        "api": { "port": 8000, "dockerfile": "docker/Dockerfile.api" }
+      },
+      "_migrations_note": "This repo ships Alembic and its own CI already runs an upgrade/downgrade/upgrade round-trip, so the migrations are known to be reversible before the pipeline ever runs one. enabled=true once the deployed revision is on a migrated schema.",
+      "migrations": {
+        "enabled": true,
+        "command": ["alembic", "upgrade", "head"],
+        "timeout_seconds": 300
+      },
+      "db": {
+        "pool_size": 5,
+        "max_overflow": 2,
+        "pool_recycle_seconds": 1800,
+        "pool_timeout_seconds": 10
+      },
+      "env": {
+        "INDUSTRY_BENCHMARKS_PATH": "",
+        "PRICING_DEFAULT_MARGIN_BASIS": "MARGIN"
+      }
+    }
+  ]
+}

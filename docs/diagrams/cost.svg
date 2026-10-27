@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 860 400" width="860" height="400" font-family="ui-sans-serif, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
+  <title>Monthly cost by configuration</title>
+  <desc>Estimated monthly cost. The default stack is $48; two NAT gateways take it to $114; everything on is $254. Bars are to scale.</desc>
+  <style>
+    :root{--bg:#0A0B0D;--line:#23262D;--line-strong:#343842;--text:#E8EAED;--muted:#9097A1;--subtle:#5F6670;--accent:#C6F432;--bar:#343842}
+    .t{fill:var(--text)} .m{fill:var(--muted)} .s{fill:var(--subtle)}
+    .label{font-size:11px;font-weight:500;letter-spacing:.08em;font-family:ui-monospace,'SF Mono',Menlo,monospace}
+    .mono{font-family:ui-monospace,'SF Mono',Menlo,Consolas,monospace}
+  </style>
+  <rect width="860" height="400" fill="var(--bg)"/>
+  <rect x="40" y="30" width="2" height="10" fill="var(--accent)"/>
+  <text class="m label" x="52" y="40">MONTHLY COST · ESTIMATED</text>
+  <text class="t" x="40" y="72" font-size="20" font-weight="600" letter-spacing="-0.02em">The default stack is about $48 a month. Everything on is about $254.</text>
+  <line x1="200" y1="110" x2="200" y2="352" stroke="var(--line-strong)"/>
+
+  <text class="t" x="40" y="142" font-size="14" font-weight="600">Default</text>
+  <text class="m" x="40" y="160" font-size="12">every switch off</text>
+  <rect x="200" y="124" width="102.5" height="36" rx="6" fill="var(--accent)"/>
+  <text class="t mono" x="312.5" y="147" font-size="13" font-weight="500">$48</text>
+
+  <text class="t" x="40" y="206" font-size="14" font-weight="600">+ NAT instance</text>
+  <text class="m" x="40" y="224" font-size="12">one t4g.nano</text>
+  <rect x="200" y="188" width="109.0" height="36" rx="6" fill="var(--bar)"/>
+  <text class="t mono" x="319.0" y="211" font-size="13" font-weight="500">$51</text>
+
+  <text class="t" x="40" y="270" font-size="14" font-weight="600">+ NAT gateways × 2</text>
+  <text class="m" x="40" y="288" font-size="12">managed, one per AZ</text>
+  <rect x="200" y="252" width="242.2" height="36" rx="6" fill="var(--bar)"/>
+  <text class="t mono" x="452.2" y="275" font-size="13" font-weight="500">$114</text>
+
+  <text class="t" x="40" y="334" font-size="14" font-weight="600">Everything on</text>
+  <text class="m" x="40" y="352" font-size="12">all opt-in switches</text>
+  <rect x="200" y="316" width="540.0" height="36" rx="6" fill="var(--bar)"/>
+  <text class="t mono" x="750.0" y="339" font-size="13" font-weight="500">$254</text>
+
+  <text class="m" x="40" y="384" font-size="11">Source: scripts/cost-estimate.sh, ap-south-1 list prices. Excludes data transfer and per-request charges.</text>
+</svg>

@@ -1,0 +1,108 @@
+diff --git a/backend/app/main.py b/backend/app/main.py
+index 0edf9ca..71fc9d8 100644
+--- a/backend/app/main.py
++++ b/backend/app/main.py
+@@ -3,10 +3,12 @@
+ from __future__ import annotations
+ 
+ import logging
++import os
+ from contextlib import asynccontextmanager
+ 
+-from fastapi import FastAPI
++from fastapi import FastAPI, Response, status
+ from fastapi.middleware.cors import CORSMiddleware
++from sqlalchemy import text
+ 
+ from app.config import get_settings
+ from app.db.session import Base, engine
+@@ -71,9 +73,63 @@ for module in (companies, analysis):
+     app.include_router(module.router)
+ 
+ 
++@app.get("/health/live", tags=["meta"])
++def liveness() -> dict[str, str]:
++    """Is the process running and able to answer?
++
++    Deliberately shallow: it touches nothing external. This is what the
++    container health check uses, because the question it answers is "should
++    this container be restarted", and restarting a container will not fix a
++    database that is down.
++    """
++    return {"status": "alive", "commit": os.getenv("GIT_SHA", "unknown")}
++
++
+ @app.get("/health", tags=["meta"])
+-def health() -> dict[str, str]:
+-    return {"status": "ok"}
++def health(response: Response) -> dict[str, object]:
++    """Is this instance able to serve requests? Used by the load balancer.
++
++    Checks the database, because a service that cannot reach its database
++    cannot answer a single useful request. `return {"status": "ok"}` would pass
++    while every real endpoint 500s — which means a deploy that broke the
++    connection string would sail through its health check and take production
++    down looking green.
++
++    Returns 503 when unhealthy so the ALB deregisters this target, and so the
++    ECS deployment circuit breaker sees a failing rollout and rolls back.
++
++    The tradeoff, stated plainly: with one running task, a database blip longer
++    than the unhealthy threshold (3 x 15s) takes the whole service out of the
++    load balancer rather than serving the frontend with a broken API. That is
++    the correct behaviour for a deployment gate and the wrong behaviour for
++    availability; the fix is more than one task, not a shallower check.
++    """
++    checks: dict[str, str] = {}
++    healthy = True
++
++    try:
++        with engine.connect() as conn:
++            conn.execute(text("SELECT 1"))
++        checks["database"] = "ok"
++    except Exception as exc:  # noqa: BLE001 - any failure here means unhealthy
++        # Logged at warning, not error: during a rolling deploy this fires
++        # briefly and legitimately while the new task starts.
++        logger.warning("health check: database unreachable: %s", exc)
++        checks["database"] = "unreachable"
++        healthy = False
++
++    if not healthy:
++        response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
++
++    return {
++        "status": "healthy" if healthy else "unhealthy",
++        "checks": checks,
++        # Injected by the pipeline at image build time. This is what lets you
++        # read off a live URL exactly which commit is serving traffic, and what
++        # scripts/smoke-test.sh asserts against after a deploy.
++        "commit": os.getenv("GIT_SHA", "unknown"),
++        "service": os.getenv("SERVICE_NAME", "finsight"),
++    }
+ 
+ 
+ @app.get("/methodology", tags=["meta"])
+diff --git a/backend/tests/test_api_integration.py b/backend/tests/test_api_integration.py
+index 588476c..b140a78 100644
+--- a/backend/tests/test_api_integration.py
++++ b/backend/tests/test_api_integration.py
+@@ -6,7 +6,18 @@ import pytest
+ 
+ 
+ def test_health_and_methodology_are_public(client):
+-    assert client.get("/health").json() == {"status": "ok"}
++    health = client.get("/health")
++    assert health.status_code == 200
++    body = health.json()
++    assert body["status"] == "healthy"
++    # The check must be a real one. A /health that reports nothing about its
++    # dependencies would pass this suite while failing every real request, and
++    # the load balancer would keep sending it traffic.
++    assert body["checks"]["database"] == "ok"
++    # Set from GIT_SHA at image build time; "unknown" outside a built image.
++    assert "commit" in body
++
++    assert client.get("/health/live").json()["status"] == "alive"
+ 
+     methodology = client.get("/methodology").json()
+     assert methodology["models"]["altman"]["variants"]["Z_1968"]["coefficients"]["x3"] == 3.3

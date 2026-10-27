@@ -1,0 +1,69 @@
+# Copy to terraform/envs/dev.tfvars and fill in.
+#
+# dev is the same topology as production with a smaller blast radius and a
+# tighter budget. It is meant to be created for the length of a change and
+# destroyed afterwards — `make destroy ENV=dev`.
+
+environment = "dev"
+project     = "autodeployx"
+aws_region  = "ap-south-1"
+
+operator_cidr = "203.0.113.42/32"
+
+budget_notification_email = "you@example.com"
+
+github_owner = "IshaanS0112"
+github_repo  = "AutoDeployX"
+# Wider than production on purpose: a feature branch has to be able to deploy
+# here or the environment is useless. This is exactly why dev has its own role
+# and its own state file rather than sharing production's — the trust policy
+# is the security boundary, so a looser one must not be the same one.
+github_allowed_refs = [
+  "repo:IshaanS0112/AutoDeployX:ref:refs/heads/main",
+  "repo:IshaanS0112/AutoDeployX:pull_request",
+  "repo:IshaanS0112/AutoDeployX:environment:dev",
+]
+
+# --- Cost levers -----------------------------------------------------------
+use_fargate_spot          = true
+enable_container_insights = false
+log_retention_days        = 1 # nobody reads week-old dev logs
+rds_instance_class        = "db.t3.micro"
+rds_backup_retention_days = 0 # no PITR wanted on a throwaway database
+rds_deletion_protection   = false
+budget_thresholds_usd     = [3, 5, 10] # tighter: dev is the one you forget
+
+# --- SLO -------------------------------------------------------------------
+# Off. An error budget over a service nobody uses measures nothing, and an
+# alarm that fires every time you deliberately break a deploy to test the
+# circuit breaker is an alarm you learn to ignore.
+enable_slo_alarms             = false
+enable_cost_anomaly_detection = true
+
+# ---------------------------------------------------------------------------
+# THE EXPENSIVE SWITCHES — all off, and the default apply is the ~$0.033/hour
+# stack docs/cost-breakdown.md describes.
+#
+# Run `make cost ENV=<env>` before flipping any of these. It prices whatever
+# combination you have set and tells you the multiple against the default.
+# ---------------------------------------------------------------------------
+
+# Production-correct networking. enable_private_subnets on its own costs
+# nothing and breaks the deployment — tasks in a private subnet with no route
+# to ECR never start. Pair it with ONE of the two below.
+# enable_private_subnets = true
+# enable_nat_gateway     = true    # ~$32/mo each; single_nat_gateway halves it
+# single_nat_gateway     = true
+# enable_vpc_endpoints   = true    # ~$7.20/mo per endpoint per AZ (~$72 for 5 x 2)
+
+# enable_flow_logs        = true   # ~$0.50/GB ingested
+# enable_waf              = true   # ~$8/mo all in
+# enable_alb_access_logs  = true   # ~$0.50/mo
+# enable_container_insights = true # ~$3-8/mo, NOT free-tier eligible
+
+# rds_multi_az                     = true  # ~2x the RDS line
+# rds_performance_insights         = true  # ~$2-5/mo beyond 7-day retention
+# rds_enhanced_monitoring_interval = 60    # ~$2-5/mo, billed per instance per minute
+
+# Pin the AZs when you want the same tfvars to rebuild the same stack.
+# availability_zones = ["ap-south-1a", "ap-south-1b"]

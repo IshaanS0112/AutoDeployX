@@ -1,0 +1,35 @@
+# Copy to terraform.tfvars and fill in. terraform.tfvars is gitignored.
+#
+# The Anthropic key is NOT here — pass it as an environment variable so it
+# never touches a file that could be committed:
+#   export TF_VAR_anthropic_api_key="sk-ant-..."
+
+# Your public IP, for the one-time database bootstrap. Get it with:
+#   curl -s ifconfig.me
+# Do not leave this as 0.0.0.0/0.
+operator_cidr = "203.0.113.42/32"
+
+# Budget alerts land here. Required.
+budget_notification_email = "you@example.com"
+
+# CloudWatch alarms land here. Defaults to the budget address if omitted.
+# alert_email = "you@example.com"
+
+aws_region  = "ap-south-1"
+project     = "autodeployx"
+environment = "production"
+
+github_owner = "IshaanS0112"
+github_repo  = "AutoDeployX"
+github_allowed_refs = [
+  "repo:IshaanS0112/AutoDeployX:ref:refs/heads/main",
+  "repo:IshaanS0112/AutoDeployX:environment:production",
+]
+
+# --- Cost levers. See docs/cost-breakdown.md before changing any of these. ---
+use_fargate_spot          = true  # ~70% off Fargate compute
+enable_container_insights = false # NOT free-tier; can exceed the compute bill
+log_retention_days        = 7
+rds_instance_class        = "db.t3.micro" # free tier, 12 months
+rds_deletion_protection   = false         # so teardown.sh works unattended
+budget_thresholds_usd     = [5, 10, 20]

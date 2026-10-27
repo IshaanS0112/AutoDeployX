@@ -1,0 +1,34 @@
+# AutoDeployX — copied into the service repo checkout as .dockerignore before the
+# image build.
+
+.git
+.github
+.gitignore
+**/.env
+**/.env.*
+!**/.env.example
+**/__pycache__
+**/*.py[cod]
+**/.pytest_cache
+**/.ruff_cache
+**/.mypy_cache
+**/.venv
+**/venv
+**/node_modules
+**/dist
+**/build
+**/.DS_Store
+**/*.db
+**/*.sqlite3
+**/coverage
+**/.coverage
+**/htmlcov
+docs
+README.md
+LICENSE
+docker-compose*.yml
+# Tests are excluded from the runtime image deliberately: they are run in CI,
+# before the image is built, and shipping them puts fixture data and test
+# credentials into a container that faces the internet.
+backend/tests
+frontend/src/**/*.test.*

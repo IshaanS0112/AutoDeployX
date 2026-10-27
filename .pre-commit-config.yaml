@@ -1,0 +1,83 @@
+# Run the cheap half of CI before the commit exists.
+#
+# The argument for this is not speed, it is signal. A CI run that fails on
+# `terraform fmt` teaches you that CI failures are usually trivial, which is
+# exactly the habit you do not want when a real one arrives.
+#
+#   pip install pre-commit && pre-commit install
+#   pre-commit run --all-files      # first time, on everything
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+      - id: check-merge-conflict
+      - id: mixed-line-ending
+      - id: check-json
+      - id: check-yaml
+        # GitHub Actions allows `on:` as a key, which YAML 1.1 parses as the
+        # boolean true. The workflows are linted by actionlint instead.
+        exclude: ^\.github/workflows/
+      - id: check-added-large-files
+        args: [--maxkb=512]
+      - id: detect-private-key
+      - id: check-executables-have-shebangs
+      - id: check-shebang-scripts-are-executable
+
+  # The one that matters most. This repo's entire security model is that no
+  # long-lived AWS credential exists anywhere in it — OIDC, start to finish.
+  # That claim survives exactly as long as nobody pastes a key into a tfvars
+  # file "just to test something".
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.21.2
+    hooks:
+      - id: gitleaks
+
+  - repo: https://github.com/antonbabenko/pre-commit-terraform
+    rev: v1.96.2
+    hooks:
+      - id: terraform_fmt
+      - id: terraform_validate
+        args: [--tf-init-args=-backend=false]
+      - id: terraform_tflint
+        args: [--args=--recursive]
+
+  - repo: https://github.com/koalaman/shellcheck-precommit
+    rev: v0.10.0
+    hooks:
+      - id: shellcheck
+        args: [-x]
+
+  - repo: https://github.com/hadolint/hadolint
+    rev: v2.13.1-beta
+    hooks:
+      - id: hadolint-docker
+        args: [--failure-threshold, warning]
+
+  - repo: https://github.com/rhysd/actionlint
+    rev: v1.7.4
+    hooks:
+      - id: actionlint
+
+  # Local hooks. These are the project's own gates, so they run the same
+  # scripts CI runs rather than a second implementation that can drift.
+  - repo: local
+    hooks:
+      - id: validate-manifest
+        name: services.json is valid and complete
+        entry: scripts/validate-manifest.sh
+        language: script
+        pass_filenames: false
+        files: ^services/services\.json$
+
+      - id: policy
+        name: AutoDeployX policy rules (conftest)
+        entry: scripts/policy-check.sh
+        language: script
+        pass_filenames: false
+        files: ^(terraform/|policy/)
+        # checkov on every commit is slow enough that people start using
+        # --no-verify, which costs more than it saves. CI runs the full thing.
+        stages: [pre-push]

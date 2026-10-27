@@ -1,0 +1,117 @@
+name: Rollback
+
+# Manual rollback to a specific commit. The image for that SHA is already in ECR
+# (tags are immutable, and the lifecycle policy keeps the last 10), so this does NOT
+# rebuild anything — it.
+
+on:
+  workflow_dispatch:
+    inputs:
+      service:
+        description: "Service to roll back"
+        required: true
+        type: choice
+        options: [finsight, strategysphere]
+      sha:
+        description: "Git SHA to roll back TO (8 chars, as tagged in ECR)"
+        required: true
+        type: string
+      reason:
+        description: "Why (recorded in the run summary)"
+        required: false
+        type: string
+        default: "unspecified"
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: deploy-refs/heads/main   # shares the deploy workflow's lock
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ap-south-1
+
+jobs:
+  rollback:
+    name: Roll ${{ inputs.service }} back to ${{ inputs.sha }}
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: ${{ steps.rollback.outputs.service_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate the SHA looks like a SHA
+        run: |
+          set -euo pipefail
+          if ! [[ "${{ inputs.sha }}" =~ ^[0-9a-f]{7,40}$ ]]; then
+            echo "::error::'${{ inputs.sha }}' is not a hex git SHA."
+            exit 1
+          fi
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: gha-rollback-${{ github.run_id }}
+
+      - name: Confirm the target images exist in ECR
+        env:
+          TAG: ${{ inputs.sha }}
+          SERVICE_KEY: ${{ inputs.service }}
+        run: |
+          set -euo pipefail
+          missing=0
+          for c in api web; do
+            repo="autodeployx/${SERVICE_KEY}-${c}"
+            if aws ecr describe-images --repository-name "$repo" --image-ids "imageTag=${TAG}" >/dev/null 2>&1; then
+              echo "found ${repo}:${TAG}"
+            else
+              echo "::error::${repo}:${TAG} is not in ECR."
+              missing=1
+            fi
+          done
+          if [ "$missing" -ne 0 ]; then
+            echo "Available tags (most recent 10):"
+            aws ecr describe-images --repository-name "autodeployx/${SERVICE_KEY}-api" \
+              --query 'sort_by(imageDetails,&imagePushedAt)[-10:].[imageTags[0],imagePushedAt]' --output table
+            echo "The lifecycle policy keeps the last 10 images. Older SHAs need a rebuild:"
+            echo "  git checkout <sha> && git push --force-with-lease  (or re-run Deploy on that ref)"
+            exit 1
+          fi
+
+      - id: rollback
+        name: Deploy the previous image
+        env:
+          SERVICE_KEY: ${{ inputs.service }}
+          IMAGE_TAG: ${{ inputs.sha }}
+          CLUSTER: ${{ vars.ECS_CLUSTER }}
+          AWS_REGION: ${{ env.AWS_REGION }}
+        run: ./scripts/deploy.sh
+
+      - name: Smoke test
+        env:
+          SERVICE_URL: ${{ steps.rollback.outputs.service_url }}
+          EXPECTED_SHA: ${{ inputs.sha }}
+          HEALTH_PATH: /api/health
+        run: ./scripts/smoke-test.sh
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "### Rollback — ${{ inputs.service }}"
+            echo ""
+            echo "| field | value |"
+            echo "|---|---|"
+            echo "| rolled back to | \`${{ inputs.sha }}\` |"
+            echo "| reason | ${{ inputs.reason }} |"
+            echo "| triggered by | @${{ github.actor }} |"
+            echo "| url | ${{ steps.rollback.outputs.service_url }} |"
+            echo "| result | ${{ job.status }} |"
+            echo ""
+            echo "The main branch still points at the bad commit. Revert it in git"
+            echo "as well, or the next push to main will redeploy the problem."
+          } >> "$GITHUB_STEP_SUMMARY"

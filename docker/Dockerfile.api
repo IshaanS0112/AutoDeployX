@@ -1,0 +1,66 @@
+# syntax=docker/dockerfile:1.7
+# AutoDeployX — generic multi-stage image for the FastAPI backends (FinSight 360 and
+# StrategySphere AI are structurally identical: same Python version, same dependency
+# set, same `uvicorn.
+
+ARG PYTHON_VERSION=3.12
+
+# ---- Build stage ----------------------------------------------------------
+# Everything that needs pip, setuptools, wheel or a compiler happens here and
+# is thrown away. Only the resolved site-packages tree crosses into runtime.
+FROM python:${PYTHON_VERSION}-slim AS builder
+
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
+WORKDIR /build
+
+# Dependencies are copied and installed BEFORE the source.
+COPY backend/requirements.txt ./
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install --user --no-warn-script-location -r requirements.txt
+
+# ---- Runtime stage --------------------------------------------------------
+FROM python:${PYTHON_VERSION}-slim AS runtime
+
+# Injected by the pipeline. Surfaced by GET /health so you can read straight
+# off a live URL which commit is actually serving traffic.
+ARG GIT_SHA=unknown
+ARG BUILD_TIME=unknown
+ARG SERVICE_NAME=api
+
+ENV GIT_SHA=${GIT_SHA} \
+    BUILD_TIME=${BUILD_TIME} \
+    SERVICE_NAME=${SERVICE_NAME} \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PATH=/home/appuser/.local/bin:$PATH
+
+# Non-root before anything is copied, so --chown lands correctly in one layer.
+RUN useradd --create-home --uid 10001 --shell /usr/sbin/nologin appuser
+
+WORKDIR /app
+
+COPY --from=builder --chown=appuser:appuser /root/.local /home/appuser/.local
+COPY --chown=appuser:appuser backend/app ./app
+# Reference datasets the upstream compose file bind-mounts. Baked in because
+# Fargate has no host filesystem. Read-only at runtime by convention.
+COPY --chown=appuser:appuser data ./data
+
+USER appuser
+
+EXPOSE 8000
+
+# No curl in the runtime image — it and its TLS dependency chain are ~12 MB of
+# attack surface for one HTTP GET the interpreter can already make.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+    CMD ["python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health/live', timeout=4).status==200 else 1)"]
+
+# --proxy-headers so the app sees the client's scheme/host from the ALB rather
+# than the load balancer's, and forwarded-allow-ips scoped to the VPC-internal
+# hop that actually fronts it.
+CMD ["uvicorn", "app.main:app", \
+     "--host", "0.0.0.0", "--port", "8000", \
+     "--proxy-headers", "--forwarded-allow-ips", "*", \
+     "--no-server-header"]

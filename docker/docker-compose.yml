@@ -1,0 +1,62 @@
+# AutoDeployX — local parity stack. Runs the SAME images the pipeline ships, from
+# the same Dockerfiles and the same build context, so "works locally" and "works on
+# ECS" diverge in as few.
+
+name: autodeployx-local
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${DB_USER:-app}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-localdev}
+      POSTGRES_DB: ${DB_NAME:-appdb}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      # The app runs create_all on startup, so it must not start until Postgres
+      # is accepting connections — not merely until the container is "up".
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-app} -d ${DB_NAME:-appdb}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: ${SERVICE_REPO:-../FinSight-360}
+      dockerfile: ${AUTODEPLOYX_DIR:-../AutoDeployX}/docker/Dockerfile.api
+      args:
+        GIT_SHA: ${GIT_SHA:-local}
+        BUILD_TIME: ${BUILD_TIME:-local}
+        SERVICE_NAME: ${SERVICE_NAME:-finsight}
+    environment:
+      DATABASE_URL: postgresql+psycopg2://${DB_USER:-app}:${DB_PASSWORD:-localdev}@db:5432/${DB_NAME:-appdb}
+      CORS_ORIGINS: http://localhost:8080
+      # Local only. In production this arrives from Secrets Manager, injected
+      # by the ECS agent — never as a value in the task definition.
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      GIT_SHA: ${GIT_SHA:-local}
+    ports:
+      # Published here because `api` owns the shared network namespace.
+      # 8080 -> nginx :80 (in the web container), 8000 -> uvicorn (direct,
+      # for poking the API without going through the proxy).
+      - "8080:80"
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  web:
+    build:
+      context: ${SERVICE_REPO:-../FinSight-360}
+      dockerfile: ${AUTODEPLOYX_DIR:-../AutoDeployX}/docker/Dockerfile.frontend
+      args:
+        GIT_SHA: ${GIT_SHA:-local}
+    # Shares the api container's network namespace — see the header comment.
+    network_mode: "service:api"
+    depends_on:
+      api:
+        condition: service_started
+
+volumes:
+  pgdata:

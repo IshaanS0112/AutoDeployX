@@ -1,0 +1,81 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 640" width="1280" height="640" font-family="Geist, ui-sans-serif, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
+  <title>AutoDeployX</title>
+  <desc>GitHub social preview card: AutoDeployX, a production CI/CD pipeline deploying to AWS ECS Fargate.</desc>
+
+  <style>
+    :root{
+      --bg:#0A0B0D; --surface:#111317; --surface2:#171A1F;
+      --line:#23262D; --line-strong:#343842;
+      --text:#E8EAED; --muted:#9097A1; --subtle:#5F6670;
+      --accent:#C6F432; --success:#34D399; --danger:#F87171;
+    }
+    .t{fill:var(--text)} .m{fill:var(--muted)} .sub{fill:var(--subtle)}
+    .mono{font-family:ui-monospace,'Geist Mono','SF Mono',Menlo,Consolas,monospace}
+    .label{font-size:13px;font-weight:500;letter-spacing:.08em}
+    .panel{fill:var(--surface);stroke:var(--line);stroke-width:1;rx:10}
+  </style>
+
+  <defs>
+    <pattern id="dots" width="24" height="24" patternUnits="userSpaceOnUse">
+      <circle cx="1" cy="1" r="1" fill="#1A1D23"/>
+    </pattern>
+  </defs>
+
+  <rect x="0" y="0" width="1280" height="640" fill="var(--bg)"/>
+  <rect x="0" y="0" width="1280" height="640" fill="url(#dots)"/>
+
+  <rect x="80" y="86" width="3" height="14" fill="var(--accent)"/>
+  <text class="t mono label" x="96" y="98">CI/CD &#183; AWS &#183; TERRAFORM</text>
+
+  <text class="t" x="80" y="200" font-size="78" font-weight="600" letter-spacing="-0.03em">AutoDeployX</text>
+
+  <text class="t" x="80" y="266" font-size="27" font-weight="500" letter-spacing="-0.01em">A bad deploy rolls itself back</text>
+  <text class="m" x="80" y="304" font-size="27" font-weight="400" letter-spacing="-0.01em">before traffic ever moves.</text>
+
+  <text class="sub" x="80" y="366" font-size="17">Docker &#183; GitHub Actions &#183; Terraform &#183; ECS Fargate &#183; RDS &#183; CloudWatch</text>
+
+  <g>
+    <rect class="panel" x="80" y="408" width="224" height="104"/>
+    <text class="sub mono" x="104" y="440" font-size="11" letter-spacing=".08em">TERRAFORM MODULES</text>
+    <text class="t mono" x="104" y="478" font-size="30" font-weight="500">10</text>
+    <text class="m" x="104" y="500" font-size="13">modules, 0 console clicks</text>
+  </g>
+  <g>
+    <rect class="panel" x="328" y="408" width="224" height="104"/>
+    <text class="sub mono" x="352" y="440" font-size="11" letter-spacing=".08em">STORED AWS KEYS</text>
+    <text class="mono" x="352" y="478" font-size="30" font-weight="500" fill="var(--accent)">0</text>
+    <text class="m" x="352" y="500" font-size="13">OIDC, short-lived STS</text>
+  </g>
+  <g>
+    <rect class="panel" x="576" y="408" width="224" height="104"/>
+    <text class="sub mono" x="600" y="440" font-size="11" letter-spacing=".08em">RUNNING COST</text>
+    <text class="t mono" x="600" y="478" font-size="30" font-weight="500">$0.03</text>
+    <text class="m" x="600" y="500" font-size="13">per hour &#183; $0 idle</text>
+  </g>
+
+  <text class="sub mono" x="80" y="570" font-size="14">github.com/IshaanS0112/AutoDeployX</text>
+
+  <g transform="translate(884, 150)">
+    <rect x="0" y="0" width="150" height="52" rx="8" fill="var(--surface)" stroke="var(--line-strong)" stroke-width="1"/>
+    <text class="t" x="75" y="31" text-anchor="middle" font-size="14" font-weight="500">git push</text>
+
+    <path d="M75,52 L75,92" stroke="var(--line-strong)" stroke-width="1.5" fill="none"/>
+
+    <rect x="0" y="92" width="150" height="52" rx="8" fill="var(--surface)" stroke="var(--line-strong)" stroke-width="1"/>
+    <text class="t" x="75" y="123" text-anchor="middle" font-size="14" font-weight="500">build &#183; scan &#183; sign</text>
+
+    <path d="M75,144 L75,184" stroke="var(--line-strong)" stroke-width="1.5" fill="none"/>
+
+    <rect x="0" y="184" width="150" height="52" rx="8" fill="var(--surface)" stroke="var(--line-strong)" stroke-width="1"/>
+    <text class="t" x="75" y="215" text-anchor="middle" font-size="14" font-weight="500">health check</text>
+
+    <path d="M44,236 L44,276" stroke="var(--danger)" stroke-width="2" fill="none"/>
+    <path d="M106,236 L106,276" stroke="var(--accent)" stroke-width="2" fill="none"/>
+
+    <rect x="-34" y="276" width="140" height="52" rx="8" fill="rgba(248,113,113,0.10)" stroke="var(--danger)" stroke-width="1.5"/>
+    <text x="36" y="307" text-anchor="middle" font-size="14" font-weight="500" fill="var(--text)">rolled back</text>
+
+    <rect x="126" y="276" width="140" height="52" rx="8" fill="rgba(198,244,50,0.12)" stroke="var(--accent)" stroke-width="1.5"/>
+    <text x="196" y="307" text-anchor="middle" font-size="14" font-weight="500" fill="var(--text)">live</text>
+  </g>
+</svg>
