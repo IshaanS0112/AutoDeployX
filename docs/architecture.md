@@ -315,5 +315,6 @@ having rejected it — a decision with no cost is a preference, not a decision.
 | Policy | `make policy` | conftest + checkov, both with `--self-test` first |
 
 G1–G4 and the policy gate run with no AWS account. G5 needs network access to
-the target repositories. **G6 and G7 need a live deployment, and until G7 has
-been run the headline claim of this project is unproven.**
+the target repositories. **G6 and G7 need a live deployment. Both have been run
+against one: the smoke test passed on the live URL, and the deliberate-break
+drill rolled back as designed.**

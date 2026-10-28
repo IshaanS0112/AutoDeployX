@@ -71,9 +71,9 @@ That `commit` field is what the pipeline's smoke test checks after every deploy.
 
 **Run and verified locally:** the images build; the stack serves traffic in Docker; health reports the deployed commit; SPA deep links return 200; security headers are present on API responses; correlation IDs pass through to the logs; rate limiting sheds load; image sizes are measured (API 342 to 309 MB on disk, 71 to 63 MB compressed).
 
-**Validated, but never applied to a real AWS account:** TLS and host routing, private subnets with NAT or VPC endpoints, WAF, multi-AZ RDS, autoscaling, and the migration stage. They pass `terraform validate` and the policy checks.
+**Run and verified on AWS:** both services, FinSight 360 and StrategySphere, deployed to ECS Fargate through the pipeline, several times. The smoke test (G6) passed against the live URL. The rollback drill (G7) passed: a deliberately broken revision failed its health checks, the circuit breaker restored the previous revision, and the public URL kept answering throughout.
 
-**Not yet done:** a smoke test against a live URL, and the rollback drill against a real deployment. [`docs/setup.md`](docs/setup.md) describes both.
+**Validated, but never applied to a real AWS account:** TLS and host routing, private subnets with NAT or VPC endpoints, WAF, multi-AZ RDS, autoscaling, and the migration stage. They pass `terraform validate` and the policy checks.
 
 ---
 
